@@ -1,0 +1,365 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Fastfood
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.MedicalServices
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.entity.TransactionEntity
+import com.example.ui.FinanceUiState
+import com.example.ui.components.BudgetAlertBanner
+import com.example.ui.components.MainBalanceHeaderCard
+import com.example.ui.theme.CategoryPurple
+import com.example.ui.theme.ExpenseRed
+import com.example.ui.theme.IncomeGreen
+import com.example.ui.theme.PrimaryEmerald
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+import com.example.ui.components.TopCurrencyHeader
+import com.example.ui.theme.SleekPrimary
+
+@Composable
+fun HomeScreen(
+    uiState: FinanceUiState,
+    onAddTransactionClicked: () -> Unit,
+    onDeleteTransaction: (TransactionEntity) -> Unit,
+    onCurrencySelected: (String) -> Unit,
+    onCurrencyIndexSelected: (Int) -> Unit = {},
+    onProfileClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    var searchQuery by remember { mutableStateOf("") }
+
+    val generalProgress = uiState.budgetProgresses.find { it.category == "Presupuesto Total Mensual" }
+
+    val filteredTransactions = uiState.transactions.filter { tx ->
+        tx.title.contains(searchQuery, ignoreCase = true) ||
+                tx.category.contains(searchQuery, ignoreCase = true) ||
+                tx.note.contains(searchQuery, ignoreCase = true)
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item { Spacer(modifier = Modifier.height(8.dp)) }
+
+            // Top Header with Gmail account profile and 3 Currency Parameter Switcher
+            item {
+                TopCurrencyHeader(
+                    userName = uiState.userName,
+                    userEmail = uiState.userEmail,
+                    isDriveConnected = uiState.isGoogleDriveConnected,
+                    activeCurrencySymbol = uiState.currencySymbol,
+                    activeCurrencyIndex = uiState.activeCurrencyIndex,
+                    exchangeRate2 = uiState.exchangeRate2,
+                    exchangeRate3 = uiState.exchangeRate3,
+                    favoriteCurrencies = uiState.favoriteCurrencies,
+                    onCurrencyIndexSelected = onCurrencyIndexSelected,
+                    onCurrencySelected = onCurrencySelected,
+                    onProfileClick = onProfileClick
+                )
+            }
+
+
+            // Main Balance Card
+            item {
+                MainBalanceHeaderCard(
+                    totalBalance = uiState.totalBalance,
+                    totalIncome = uiState.totalIncome,
+                    totalExpense = uiState.totalExpense,
+                    currencySymbol = uiState.currencySymbol
+                )
+            }
+
+            // Budget Exceeded / Warning Banner
+            item {
+                generalProgress?.let { prog ->
+                    BudgetAlertBanner(
+                        isExceeded = prog.isExceeded,
+                        isWarning = prog.isWarning,
+                        message = if (prog.isExceeded) {
+                            "Has gastado ${uiState.currencySymbol}${String.format("%.2f", prog.spentAmount)} de tu límite mensual de ${uiState.currencySymbol}${String.format("%.2f", prog.limitAmount)} (${prog.percentage}%)."
+                        } else {
+                            "Llevas el ${prog.percentage}% de tu presupuesto mensual configurado."
+                        }
+                    )
+                }
+            }
+
+            // Search Transactions
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Buscar por nombre, categoría...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PrimaryEmerald
+                    ),
+                    singleLine = true
+                )
+            }
+
+            // Section Title
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Movimientos Recientes",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${filteredTransactions.size} registros",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Transaction Items
+            if (filteredTransactions.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Sin movimientos registrados",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Presiona el botón '+' para agregar tu primer gasto o ingreso.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(filteredTransactions, key = { it.id }) { tx ->
+                    TransactionRowItem(
+                        transaction = tx,
+                        currencySymbol = uiState.currencySymbol,
+                        onDelete = { onDeleteTransaction(tx) },
+                        modifier = Modifier.animateItem()
+                    )
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(80.dp)) }
+        }
+
+        // FAB to add new transaction
+        FloatingActionButton(
+            onClick = onAddTransactionClicked,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp),
+            containerColor = SleekPrimary,
+            contentColor = Color.White
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Nueva Transacción", modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+@Composable
+fun TransactionRowItem(
+    transaction: TransactionEntity,
+    currencySymbol: String,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val categoryIcon = getCategoryIcon(transaction.category)
+    val formattedDate = remember(transaction.timestamp) {
+        val sdf = SimpleDateFormat("dd MMM, HH:mm", Locale("es", "ES"))
+        sdf.format(Date(transaction.timestamp))
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Category Icon Badge
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (transaction.type == "INCOME") IncomeGreen.copy(alpha = 0.15f)
+                        else PrimaryEmerald.copy(alpha = 0.15f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = categoryIcon,
+                    contentDescription = transaction.category,
+                    tint = if (transaction.type == "INCOME") IncomeGreen else PrimaryEmerald,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Details
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = transaction.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (transaction.isAiCategorized) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            color = CategoryPurple.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = "IA",
+                                    tint = CategoryPurple,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("IA", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = CategoryPurple)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Text(
+                    text = "${transaction.category} • $formattedDate",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Amount and Delete button
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "${if (transaction.type == "INCOME") "+" else "-"}$currencySymbol${String.format("%.2f", transaction.amount)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (transaction.type == "INCOME") IncomeGreen else ExpenseRed
+                )
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Eliminar",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+fun getCategoryIcon(category: String): ImageVector {
+    return when (category) {
+        "Alimentación" -> Icons.Default.Fastfood
+        "Transporte" -> Icons.Default.DirectionsCar
+        "Entretenimiento" -> Icons.Default.Movie
+        "Servicios" -> Icons.Default.Receipt
+        "Salud" -> Icons.Default.MedicalServices
+        "Educación" -> Icons.Default.School
+        "Compras" -> Icons.Default.ShoppingBag
+        "Sueldo" -> Icons.Default.Payments
+        "Inversión" -> Icons.Default.Lightbulb
+        else -> Icons.Default.Help
+    }
+}

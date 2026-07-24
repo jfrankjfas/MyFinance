@@ -1,0 +1,6 @@
+{
+  "name": "Finanzas Clara",
+  "description": "Aplicación intuitiva de finanzas personales para principiantes con gráficos automáticos, control de presupuesto, alertas y categorización por IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
