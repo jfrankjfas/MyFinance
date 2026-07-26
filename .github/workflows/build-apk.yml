@@ -25,9 +25,10 @@ jobs:
       uses: gradle/actions/setup-gradle@v4
       with:
         cache-disabled: true
+        validate-wrappers: false
 
-    - name: Make gradlew executable
-      run: chmod +x gradlew
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew || true
 
     - name: Restore Debug Keystore
       run: |
@@ -36,7 +37,7 @@ jobs:
         fi
 
     - name: Build Debug APK
-      run: ./gradlew :app:assembleDebug --no-daemon
+      run: gradle :app:assembleDebug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
