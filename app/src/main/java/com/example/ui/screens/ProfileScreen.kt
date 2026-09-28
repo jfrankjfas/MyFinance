@@ -81,6 +81,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.rememberCoroutineScope
 import com.example.auth.GoogleIdentityManager
 import com.example.security.AppSecurityManager
+import com.example.ui.components.AppUpdateCard
 import kotlinx.coroutines.launch
 
 @Composable
@@ -538,6 +539,11 @@ fun ProfileScreen(
                     )
                 }
             }
+        }
+
+        // App In-App Auto-Update Card
+        item {
+            AppUpdateCard()
         }
 
         // Action Section: Google Identity Services & Account Actions

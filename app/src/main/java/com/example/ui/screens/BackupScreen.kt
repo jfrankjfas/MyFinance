@@ -68,6 +68,7 @@ import com.example.auth.GoogleIdentityManager
 import com.example.data.model.CurrencyItem
 import com.example.data.model.WorldCurrencies
 import com.example.ui.FinanceUiState
+import com.example.ui.components.AppUpdateCard
 import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.PrimaryEmerald
 import com.example.ui.theme.SleekOnPrimaryContainer
@@ -243,6 +244,11 @@ fun BackupScreen(
                     }
                 }
             }
+        }
+
+        // App In-App Auto-Update Card
+        item {
+            AppUpdateCard()
         }
 
         // Firebase Cloud Realtime Database Card
