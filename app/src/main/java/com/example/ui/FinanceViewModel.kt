@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.ai.AiCategorizedResult
 import com.example.ai.GeminiCategorizer
 import com.example.ai.ReceiptScanResult
+import com.example.auth.GoogleIdentityManager
 import com.example.data.AppDatabase
 import com.example.data.FinanceRepository
 import com.example.data.entity.ArchivedPeriodEntity
@@ -147,10 +148,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _currencySymbol = MutableStateFlow("C$")
     val currencySymbol: StateFlow<String> = _currencySymbol.asStateFlow()
 
-    private val _userEmail = MutableStateFlow("jfranciscojfas@gmail.com")
-    private val _userName = MutableStateFlow("Francisco J.")
-    private val _isGoogleDriveConnected = MutableStateFlow(true)
-    private val _lastDriveSync = MutableStateFlow<String?>("Sincronizado recientemente")
+    private val appPrefs = application.getSharedPreferences("finanzas_clara_prefs", android.content.Context.MODE_PRIVATE)
+    private val initialIsLoggedIn = appPrefs.getBoolean("is_logged_in", true)
+    private val initialEmail = if (initialIsLoggedIn) appPrefs.getString("saved_email", "jfranciscojfas@gmail.com") ?: "jfranciscojfas@gmail.com" else ""
+    private val initialName = if (initialIsLoggedIn) appPrefs.getString("saved_name", "Francisco J.") ?: "Francisco J." else "Invitado"
+
+    private val _userEmail = MutableStateFlow(initialEmail)
+    private val _userName = MutableStateFlow(initialName)
+    private val _isGoogleDriveConnected = MutableStateFlow(initialIsLoggedIn)
+    private val _lastDriveSync = MutableStateFlow<String?>(if (initialIsLoggedIn) "Conectado a cuenta Google" else "Sesión cerrada")
     private val _csvExportData = MutableStateFlow<String?>(null)
     private val _appTheme = MutableStateFlow("SYSTEM") // SYSTEM, LIGHT, DARK
     private val _appLanguage = MutableStateFlow("ES") // ES, EN
@@ -465,6 +471,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         repository.bindFirebaseManager(firebaseManager)
         viewModelScope.launch {
             repository.seedInitialDataIfEmpty(getApplication())
+            if (initialIsLoggedIn && initialEmail.isNotBlank()) {
+                firebaseManager.updateUserAccount(initialEmail)
+                // Fetch and restore whatever is already linked to this Gmail account from Firestore
+                val count = repository.fetchAndRestoreAllFromCloud(initialEmail)
+                if (count > 0) {
+                    _importMessage.value = "✅ Se recuperaron $count registros vinculados a tu cuenta Gmail ($initialEmail)."
+                }
+            } else {
+                firebaseManager.disconnectUser()
+                repository.clearLocalDataOnly()
+            }
             checkUpcomingPaymentAlerts()
         }
     }
@@ -521,36 +538,102 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun logoutUser() {
         viewModelScope.launch {
-            // Back up current data to memory before clearing
-            val currentDataJson = repository.exportDataToJson()
-            _backupJson.value = currentDataJson
+            _isAiLoading.value = true
+            _importMessage.value = "Resguardando datos y cerrando sesión..."
+            try {
+                // Sincronizar datos pendientes antes de cerrar la sesión local
+                if (_isGoogleDriveConnected.value && _userEmail.value.isNotBlank()) {
+                    repository.syncAllToCloud()
+                }
+            } catch (e: Exception) {
+                // Sync error non-fatal on logout
+            }
 
-            // Clear local database
-            repository.clearAllData()
+            // Desconectar credenciales de Google Identity Services
+            try {
+                val googleIdManager = GoogleIdentityManager(getApplication())
+                googleIdManager.signOut()
+            } catch (e: Exception) {
+                // Ignore
+            }
 
-            _userEmail.value = "Invitado (Sin sesión)"
-            _userName.value = "Usuario Invitado"
+            // 1. Desconectar listeners de Firebase
+            firebaseManager.disconnectUser()
+
+            // 2. Quitar todos los registros de la app (Room SQLite queda limpio por seguridad y privacidad)
+            repository.clearLocalDataOnly()
+
+            // 3. Actualizar estado en memoria
+            _userEmail.value = ""
+            _userName.value = "Sin sesión"
             _isGoogleDriveConnected.value = false
-            _lastDriveSync.value = "Desconectado"
-            _importMessage.value = "ℹ️ Sesión cerrada. Los datos locales de la cuenta se han limpiado por seguridad."
+            _lastDriveSync.value = "Sesión cerrada"
+
+            // 4. Guardar preferencia para recordar que se cerró sesión
+            appPrefs.edit()
+                .putBoolean("is_logged_in", false)
+                .putString("saved_email", "")
+                .putString("saved_name", "")
+                .apply()
+
+            _isAiLoading.value = false
+            _importMessage.value = "🔒 Sesión cerrada. Registros retirados de la app. Tus datos están a salvo en tu cuenta Gmail."
         }
     }
 
     fun loginUser(email: String, name: String) {
+        val cleanEmail = email.trim().lowercase()
+        val displayName = if (name.isBlank()) {
+            cleanEmail.substringBefore("@").replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
+        } else {
+            name.trim()
+        }
+
         viewModelScope.launch {
-            _userEmail.value = email
-            _userName.value = name
+            _isAiLoading.value = true
+            _importMessage.value = "Conectando con cuenta Gmail ($cleanEmail)..."
+
+            _userEmail.value = cleanEmail
+            _userName.value = displayName
             _isGoogleDriveConnected.value = true
-            firebaseManager.updateUserAccount(email)
+
+            // Guardar preferencia de sesión
+            appPrefs.edit()
+                .putBoolean("is_logged_in", true)
+                .putString("saved_email", cleanEmail)
+                .putString("saved_name", displayName)
+                .apply()
+
             val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
             _lastDriveSync.value = "Conectado ahora (${sdf.format(Date())})"
 
-            val currentBackup = _backupJson.value
-            if (!currentBackup.isNullOrEmpty()) {
-                repository.importDataFromJson(currentBackup)
-                _importMessage.value = "✅ Sesión iniciada con $email. Se restauró tu presupuesto respaldado."
+            // 1. Vincular cuenta a Firebase Firestore para cualquier usuario Gmail
+            firebaseManager.updateUserAccount(cleanEmail)
+
+            // 2. Mandar a traer TODO lo almacenado y vinculado a esta cuenta Gmail
+            _importMessage.value = "Descargando todos tus registros desde la cuenta Gmail..."
+            val count = repository.fetchAndRestoreAllFromCloud(cleanEmail)
+
+            _isAiLoading.value = false
+            if (count > 0) {
+                _importMessage.value = "✅ ¡Bienvenido, $displayName! Se restauraron tus $count registros vinculados a $cleanEmail."
             } else {
-                _importMessage.value = "✅ Sesión iniciada con $email. Conectado a Firebase en tiempo real."
+                _importMessage.value = "✅ ¡Bienvenido, $displayName! Cuenta $cleanEmail vinculada. Registros sincronizados en tiempo real."
+            }
+        }
+    }
+
+    fun restoreFromCloud() {
+        viewModelScope.launch {
+            val email = _userEmail.value
+            if (email.isNotBlank()) {
+                _isAiLoading.value = true
+                _importMessage.value = "Descargando registros desde tu cuenta Gmail ($email)..."
+                val count = repository.fetchAndRestoreAllFromCloud(email)
+                _isAiLoading.value = false
+                _importMessage.value = "✅ Sincronización exitosa: Se descargaron $count registros desde tu cuenta Gmail."
+            } else {
+                _importMessage.value = "⚠️ Inicia sesión con tu cuenta Google para descargar tus registros."
             }
         }
     }

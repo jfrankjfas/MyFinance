@@ -53,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
+import com.example.auth.GoogleIdentityManager
 import com.example.data.model.CurrencyItem
 import com.example.data.model.WorldCurrencies
 import com.example.ui.FinanceUiState
@@ -72,6 +74,7 @@ import com.example.ui.theme.SleekOnPrimaryContainer
 import com.example.ui.theme.SleekPrimary
 import com.example.ui.theme.SleekPrimaryContainer
 import com.example.ui.theme.WarningAmber
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -91,9 +94,11 @@ fun BackupScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var importJsonText by remember { mutableStateOf("") }
     var showImportField by remember { mutableStateOf(false) }
     var showLoginDialog by remember { mutableStateOf(false) }
+    var showSignOutConfirmDialog by remember { mutableStateOf(false) }
 
     var loginEmailInput by remember { mutableStateOf("") }
     var loginNameInput by remember { mutableStateOf("") }
@@ -207,18 +212,32 @@ fun BackupScreen(
                     ) {
                         if (uiState.isGoogleDriveConnected) {
                             OutlinedButton(
-                                onClick = onLogout,
+                                onClick = { showSignOutConfirmDialog = true },
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text("Cerrar Sesión", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                             }
                         } else {
                             Button(
-                                onClick = { showLoginDialog = true },
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val googleIdManager = GoogleIdentityManager(context)
+                                        googleIdManager.signInWithGoogle(
+                                            activityContext = context,
+                                            onSuccess = { userData ->
+                                                onLogin(userData.email, userData.displayName)
+                                                Toast.makeText(context, "¡Sesión iniciada con Google!", Toast.LENGTH_SHORT).show()
+                                            },
+                                            onError = {
+                                                showLoginDialog = true
+                                            }
+                                        )
+                                    }
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
                             ) {
-                                Text("Conectar Cuenta Gmail", fontSize = 12.sp)
+                                Text("Continuar con Google", fontSize = 12.sp)
                             }
                         }
                     }
@@ -865,6 +884,40 @@ fun BackupScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showLoginDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    if (showSignOutConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showSignOutConfirmDialog = false },
+            title = {
+                Text(
+                    text = "Cerrar Sesión de Google",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "¿Deseas cerrar la sesión de '${uiState.userEmail}'?\n\n🔒 Por seguridad y privacidad, todos los registros de movimientos, presupuestos y periodos se quitarán de la aplicación.\n\n☁️ Tus datos están seguros en la nube vinculados a tu cuenta Gmail: ${uiState.userEmail}, y se descargarán automáticamente en cuanto vuelvas a iniciar sesión."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onLogout()
+                        showSignOutConfirmDialog = false
+                        Toast.makeText(context, "Sesión cerrada. Registros retirados de la app.", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Cerrar Sesión y Quitar Datos")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutConfirmDialog = false }) {
                     Text("Cancelar")
                 }
             }

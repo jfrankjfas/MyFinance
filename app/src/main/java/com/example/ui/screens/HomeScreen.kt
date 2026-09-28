@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +34,8 @@ import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -227,16 +230,19 @@ fun HomeScreen(
                             )
                         }
 
-                        Surface(
+                        Button(
+                            onClick = { showRescueModal = true },
                             shape = RoundedCornerShape(10.dp),
-                            color = if (uiState.isBankruptcyAlert) ExpenseRed else PrimaryEmerald
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (uiState.isBankruptcyAlert) ExpenseRed else PrimaryEmerald
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = "Abrir Plan",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                color = Color.White
                             )
                         }
                     }
@@ -312,7 +318,11 @@ fun HomeScreen(
                             .padding(vertical = 12.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            containerColor = if (!uiState.isGoogleDriveConnected) {
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            }
                         )
                     ) {
                         Column(
@@ -321,17 +331,42 @@ fun HomeScreen(
                                 .padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(
-                                text = "Sin movimientos registrados",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Presiona el botón '+' para agregar tu primer gasto o ingreso.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (!uiState.isGoogleDriveConnected) {
+                                Text(
+                                    text = "🔒 Sesión no iniciada",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Al cerrar sesión, todos los registros se retiraron de la app por seguridad y privacidad. Inicia sesión con tu cuenta Google para descargar tus datos vinculados a Gmail.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = onProfileClick,
+                                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Iniciar Sesión con Google", fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                Text(
+                                    text = "Sin movimientos registrados",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Tus registros están vinculados a ${uiState.userEmail}. Presiona el botón '+' para agregar un nuevo movimiento.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
                         }
                     }
                 }
@@ -359,6 +394,51 @@ fun HomeScreen(
             contentColor = Color.White
         ) {
             Icon(Icons.Default.Add, contentDescription = "Nueva Transacción", modifier = Modifier.size(28.dp))
+        }
+    }
+
+    // Modal de Plan de Rescate Financiero y Triaje
+    if (showRescueModal) {
+        FinancialRescueModal(
+            uiState = uiState,
+            onDismiss = { showRescueModal = false },
+            onGoToScheduledPayments = {
+                showRescueModal = false
+                onGoToScheduledPayments()
+            },
+            onResetToZero = {
+                showRescueModal = false
+                onResetToZero()
+            }
+        )
+    }
+
+    // Modal de vista ampliada de comprobante / recibo
+    viewerImageUri?.let { uri ->
+        Dialog(onDismissRequest = { viewerImageUri = null }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    AsyncImage(
+                        model = uri,
+                        contentDescription = "Comprobante",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(300.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(onClick = { viewerImageUri = null }) {
+                        Text("Cerrar")
+                    }
+                }
+            }
         }
     }
 }

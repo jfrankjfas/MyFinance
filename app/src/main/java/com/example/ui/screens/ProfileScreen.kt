@@ -65,27 +65,51 @@ import com.example.ui.theme.SleekPrimary
 import com.example.ui.theme.SleekPrimaryContainer
 
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.runtime.rememberCoroutineScope
+import com.example.auth.GoogleIdentityManager
+import com.example.security.AppSecurityManager
+import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(
     uiState: FinanceUiState,
     onLogout: () -> Unit,
     onLogin: (String, String) -> Unit,
+    onRestoreFromCloud: () -> Unit = {},
     onSetTheme: (String) -> Unit = {},
     onSetLanguage: (String) -> Unit = {},
     onBack: () -> Unit = {},
+    securityManager: AppSecurityManager? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
     var showSignInDialog by remember { mutableStateOf(false) }
+    var showChangePinDialog by remember { mutableStateOf(false) }
+    var newPinInput by remember { mutableStateOf("") }
+    var confirmPinInput by remember { mutableStateOf("") }
+    var pinErrorMessage by remember { mutableStateOf<String?>(null) }
+
+    var isSecurityEnabled by remember {
+        mutableStateOf(securityManager?.isSecurityEnabled() ?: true)
+    }
+    var isBiometricEnabled by remember {
+        mutableStateOf(securityManager?.isBiometricEnabled() ?: true)
+    }
 
     var loginEmailInput by remember { mutableStateOf("") }
     var loginNameInput by remember { mutableStateOf("") }
@@ -372,7 +396,7 @@ fun ProfileScreen(
             }
         }
 
-        // Security & Local Room Database Card
+        // Security & Biometrics Card
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -382,40 +406,141 @@ fun ProfileScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.Security,
+                            imageVector = Icons.Default.Shield,
                             contentDescription = null,
                             tint = SleekPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Seguridad y Almacenamiento Local",
+                            text = "Seguridad de Acceso (PIN / Huella)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
 
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Toggle Security
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Solicitar PIN / Huella al entrar",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (isSecurityEnabled) "Bloqueo activo al iniciar o abrir la app" else "Desactivado (acceso directo)",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = isSecurityEnabled,
+                            onCheckedChange = { checked ->
+                                isSecurityEnabled = checked
+                                securityManager?.setSecurityEnabled(checked)
+                                Toast.makeText(
+                                    context,
+                                    if (checked) "Seguridad activada" else "Seguridad desactivada",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = SleekPrimary
+                            )
+                        )
+                    }
+
+                    if (isSecurityEnabled) {
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Toggle Biometric
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    tint = SleekPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "Usar Huella Dactilar",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Desbloqueo biométrico rápido",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = isBiometricEnabled,
+                                onCheckedChange = { checked ->
+                                    isBiometricEnabled = checked
+                                    securityManager?.setBiometricEnabled(checked)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = SleekPrimary
+                                )
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Change PIN Button
+                        OutlinedButton(
+                            onClick = {
+                                newPinInput = ""
+                                confirmPinInput = ""
+                                pinErrorMessage = null
+                                showChangePinDialog = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Key,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Cambiar Código PIN de 4 Dígitos", fontSize = 13.sp)
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
 
                     ProfileDetailRow(
                         icon = Icons.Default.Storage,
-                        title = "Base de Datos Local (Room)",
-                        subtitle = "Almacenamiento SQLite privado en este dispositivo"
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    ProfileDetailRow(
-                        icon = Icons.Default.Lock,
-                        title = "Sincronización Segura Google Drive",
-                        subtitle = if (uiState.isGoogleDriveConnected) "Sincronizado (${uiState.lastDriveSync})" else "Pausada"
+                        title = "Base de Datos Local (Room SQLite)",
+                        subtitle = "Tus registros de quincenas y meses quedan guardados de forma permanente y privada"
                     )
                 }
             }
         }
 
-        // Action Section: Sign Out / Sign In Prominent Buttons
+        // Action Section: Google Identity Services & Account Actions
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -424,64 +549,136 @@ fun ProfileScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Acciones de Cuenta",
+                        text = "Google Identity Services (OAuth 2.0 / OpenID Connect)",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Inicio de sesión seguro mediante estándares modernos OAuth 2.0 y OpenID Connect. Tus datos locales se conservan siempre.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 15.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     if (uiState.isGoogleDriveConnected) {
                         Button(
-                            onClick = { showSignOutConfirmDialog = true },
+                            onClick = onRestoreFromCloud,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = ExpenseRed,
+                                containerColor = SleekPrimary,
                                 contentColor = Color.White
                             )
                         ) {
                             Icon(
-                                imageVector = Icons.Default.ExitToApp,
-                                contentDescription = "Cerrar Sesión",
+                                imageVector = Icons.Default.CloudDone,
+                                contentDescription = "Descargar Datos",
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Cerrar Sesión y Limpiar Datos Locales",
+                                text = "Traer registros desde mi cuenta Gmail",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedButton(
+                            onClick = { showSignOutConfirmDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = ExpenseRed
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.5.dp, ExpenseRed)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ExitToApp,
+                                contentDescription = "Cerrar Sesión",
+                                modifier = Modifier.size(20.dp),
+                                tint = ExpenseRed
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Cerrar Sesión y Quitar Registros",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = ExpenseRed
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "ℹ️ Al cerrar sesión, los datos de la base de datos Room se limpiarán para proteger tu privacidad. Se restaurarán al volver a iniciar sesión.",
+                            text = "ℹ️ Al cerrar sesión, todos los registros se quitarán de la app por seguridad y privacidad. Toda tu información permanecerá intacta en la nube vinculada a tu Gmail y se restaurará al iniciar sesión.",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 15.sp,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
                     } else {
-                        Button(
-                            onClick = { showSignInDialog = true },
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Conectar Cuenta",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Conectar Cuenta de Google / Gmail",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                                text = "🔒 Sesión no iniciada: Los registros están retirados de esta pantalla. Inicia sesión con tu cuenta Google para descargar y sincronizar tus movimientos, presupuestos y periodos.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.error,
+                                lineHeight = 16.sp
                             )
+
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val googleIdManager = GoogleIdentityManager(context)
+                                        googleIdManager.signInWithGoogle(
+                                            activityContext = context,
+                                            onSuccess = { userData ->
+                                                onLogin(userData.email, userData.displayName)
+                                                Toast.makeText(context, "¡Bienvenido, ${userData.displayName}! Descargando datos...", Toast.LENGTH_SHORT).show()
+                                            },
+                                            onError = { errorMsg ->
+                                                showSignInDialog = true
+                                            }
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = "Google Identity Services",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Iniciar Sesión con Google (Gmail)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = { showSignInDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text(
+                                    text = "Ingresar correo Gmail manualmente",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }
@@ -491,7 +688,7 @@ fun ProfileScreen(
         item { Spacer(modifier = Modifier.height(24.dp)) }
     }
 
-    // Sign Out Confirmation Dialog
+    // Sign Out Confirmation Dialog (Clear local, preserve cloud)
     if (showSignOutConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showSignOutConfirmDialog = false },
@@ -505,13 +702,13 @@ fun ProfileScreen(
             },
             title = {
                 Text(
-                    text = "Confirmar Cierre de Sesión",
+                    text = "Cerrar Sesión de Google",
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = "¿Estás seguro de que deseas cerrar sesión de '${uiState.userEmail}'?\n\nEsta acción limpiará todos los registros locales de la base de datos por seguridad. Podrás iniciar sesión nuevamente para cargar tu presupuesto respaldado."
+                    text = "¿Deseas cerrar la sesión de '${uiState.userEmail}'?\n\n🔒 Por seguridad y privacidad, todos los registros de movimientos, presupuestos y periodos se quitarán de la aplicación.\n\n☁️ Tus datos están seguros en la nube vinculados a tu cuenta Gmail: ${uiState.userEmail}, y se descargarán automáticamente en cuanto vuelvas a iniciar sesión."
                 )
             },
             confirmButton = {
@@ -519,15 +716,110 @@ fun ProfileScreen(
                     onClick = {
                         onLogout()
                         showSignOutConfirmDialog = false
-                        Toast.makeText(context, "Sesión cerrada y datos locales limpiados", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Sesión cerrada. Registros retirados de la app.", Toast.LENGTH_SHORT).show()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed)
                 ) {
-                    Text("Cerrar Sesión")
+                    Text("Cerrar Sesión y Quitar Datos")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showSignOutConfirmDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    // Change PIN Dialog
+    if (showChangePinDialog) {
+        AlertDialog(
+            onDismissRequest = { showChangePinDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Password,
+                    contentDescription = null,
+                    tint = SleekPrimary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Configurar Nuevo PIN de Seguridad",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "El PIN debe tener 4 dígitos numéricos para proteger el acceso a tus finanzas.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = newPinInput,
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { char -> char.isDigit() }) {
+                                newPinInput = it
+                            }
+                        },
+                        label = { Text("Nuevo PIN (4 dígitos)") },
+                        placeholder = { Text("Ej: 4589") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = confirmPinInput,
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { char -> char.isDigit() }) {
+                                confirmPinInput = it
+                            }
+                        },
+                        label = { Text("Confirmar PIN") },
+                        placeholder = { Text("Repite el nuevo PIN") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    if (pinErrorMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = pinErrorMessage ?: "",
+                            color = ExpenseRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newPinInput.length != 4) {
+                            pinErrorMessage = "El PIN debe ser exactamente de 4 dígitos."
+                        } else if (newPinInput != confirmPinInput) {
+                            pinErrorMessage = "Los PINs no coinciden. Verifica e intenta de nuevo."
+                        } else {
+                            val success = securityManager?.updatePin(newPinInput) ?: false
+                            if (success) {
+                                showChangePinDialog = false
+                                Toast.makeText(context, "✅ PIN actualizado exitosamente", Toast.LENGTH_SHORT).show()
+                            } else {
+                                pinErrorMessage = "Error al guardar el nuevo PIN."
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                ) {
+                    Text("Guardar PIN")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChangePinDialog = false }) {
                     Text("Cancelar")
                 }
             }

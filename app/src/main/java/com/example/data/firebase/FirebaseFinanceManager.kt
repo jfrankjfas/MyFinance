@@ -34,6 +34,14 @@ data class FirebaseSyncStatus(
     val userCloudId: String = ""
 )
 
+data class CloudDataSnapshot(
+    val transactions: List<TransactionEntity> = emptyList(),
+    val budgets: List<BudgetEntity> = emptyList(),
+    val scheduledExpenses: List<ScheduledExpenseEntity> = emptyList(),
+    val extraordinaryFunds: List<ExtraordinaryFundEntity> = emptyList(),
+    val archivedPeriods: List<ArchivedPeriodEntity> = emptyList()
+)
+
 class FirebaseFinanceManager(
     private val context: Context,
     private val scope: CoroutineScope
@@ -135,13 +143,233 @@ class FirebaseFinanceManager(
     }
 
     fun updateUserAccount(email: String) {
-        val cleanEmail = email.replace(".", "_").replace("@", "_at_")
+        if (email.isBlank()) {
+            disconnectUser()
+            return
+        }
+        val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
         activeUserId = "acc_$cleanEmail"
+        _syncStatus.value = _syncStatus.value.copy(
+            isConnected = true,
+            syncStatusText = "🟢 Conectado con Gmail ($email)",
+            userCloudId = activeUserId
+        )
         setupRealtimeListeners()
+    }
+
+    fun disconnectUser() {
+        clearListeners()
+        activeUserId = "unauthenticated"
+        _syncStatus.value = _syncStatus.value.copy(
+            isConnected = false,
+            syncStatusText = "Sesión cerrada (Registros protegidos en nube)",
+            userCloudId = "",
+            cloudTransactionsCount = 0,
+            cloudBudgetsCount = 0,
+            cloudScheduledCount = 0
+        )
+    }
+
+    suspend fun fetchUserDataFromCloud(email: String): CloudDataSnapshot = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val db = firestore ?: return@withContext CloudDataSnapshot()
+        if (email.isBlank()) return@withContext CloudDataSnapshot()
+
+        val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+        val userId = "acc_$cleanEmail"
+        activeUserId = userId
+        val userDoc = db.collection("finanzas_users").document(userId)
+
+        val txList = mutableListOf<TransactionEntity>()
+        val bgList = mutableListOf<BudgetEntity>()
+        val scList = mutableListOf<ScheduledExpenseEntity>()
+        val efList = mutableListOf<ExtraordinaryFundEntity>()
+        val apList = mutableListOf<ArchivedPeriodEntity>()
+
+        try {
+            // 1. Transactions
+            val txSnap = userDoc.collection("transactions").get().await()
+            for (doc in txSnap.documents) {
+                try {
+                    val id = doc.getLong("id")?.toInt() ?: (doc.id.replace("tx_", "").toIntOrNull() ?: 0)
+                    val title = doc.getString("title") ?: ""
+                    val amount = doc.getDouble("amount") ?: 0.0
+                    val category = doc.getString("category") ?: "Varios"
+                    val type = doc.getString("type") ?: "EXPENSE"
+                    val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                    val note = doc.getString("note") ?: ""
+                    val isAi = doc.getBoolean("isAiCategorized") ?: false
+                    val attachment = doc.getString("attachmentUri")
+                    val dueDate = doc.getLong("dueDate")
+                    val hasReminder = doc.getBoolean("hasReminderScheduled") ?: false
+
+                    if (title.isNotBlank()) {
+                        txList.add(
+                            TransactionEntity(
+                                id = id,
+                                title = title,
+                                amount = amount,
+                                category = category,
+                                type = type,
+                                timestamp = timestamp,
+                                note = note,
+                                isAiCategorized = isAi,
+                                attachmentUri = attachment,
+                                dueDate = dueDate,
+                                hasReminderScheduled = hasReminder
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing cloud tx: ${e.message}")
+                }
+            }
+
+            // 2. Budgets
+            val bgSnap = userDoc.collection("budgets").get().await()
+            for (doc in bgSnap.documents) {
+                try {
+                    val cat = doc.getString("category") ?: doc.id
+                    val limit = doc.getDouble("limitAmount") ?: 0.0
+                    val thresh = doc.getLong("alertThresholdPercent")?.toInt() ?: 80
+                    bgList.add(BudgetEntity(category = cat, limitAmount = limit, alertThresholdPercent = thresh))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing cloud budget: ${e.message}")
+                }
+            }
+
+            // 3. Scheduled Expenses
+            val scSnap = userDoc.collection("scheduled_expenses").get().await()
+            for (doc in scSnap.documents) {
+                try {
+                    val id = doc.getLong("id") ?: (doc.id.replace("se_", "").toLongOrNull() ?: 0L)
+                    val title = doc.getString("title") ?: ""
+                    val amount = doc.getDouble("amount") ?: 0.0
+                    val category = doc.getString("category") ?: "Servicios"
+                    val dueDate = doc.getLong("dueDate") ?: System.currentTimeMillis()
+                    val isPaid = doc.getBoolean("isPaid") ?: false
+                    val notify = doc.getBoolean("notifyReminder") ?: true
+                    val attachment = doc.getString("attachmentUri")
+                    val note = doc.getString("note") ?: ""
+                    val isEmergency = doc.getBoolean("isEmergencyPriority") ?: false
+
+                    if (title.isNotBlank()) {
+                        scList.add(
+                            ScheduledExpenseEntity(
+                                id = id,
+                                title = title,
+                                amount = amount,
+                                category = category,
+                                dueDate = dueDate,
+                                isPaid = isPaid,
+                                notifyReminder = notify,
+                                attachmentUri = attachment,
+                                note = note,
+                                isEmergencyPriority = isEmergency
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing cloud scheduled: ${e.message}")
+                }
+            }
+
+            // 4. Extraordinary Funds
+            val efSnap = userDoc.collection("extraordinary_funds").get().await()
+            for (doc in efSnap.documents) {
+                try {
+                    val id = doc.getLong("id") ?: (doc.id.replace("ef_", "").toLongOrNull() ?: 0L)
+                    val title = doc.getString("title") ?: ""
+                    val total = doc.getDouble("totalAmount") ?: 0.0
+                    val symbol = doc.getString("currencySymbol") ?: "$"
+                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                    val note = doc.getString("note") ?: ""
+                    val allocJson = doc.getString("allocationsJson") ?: "[]"
+
+                    if (title.isNotBlank()) {
+                        efList.add(
+                            ExtraordinaryFundEntity(
+                                id = id,
+                                title = title,
+                                totalAmount = total,
+                                currencySymbol = symbol,
+                                createdAt = createdAt,
+                                note = note,
+                                allocationsJson = allocJson
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing cloud fund: ${e.message}")
+                }
+            }
+
+            // 5. Archived Periods
+            val apSnap = userDoc.collection("archived_periods").get().await()
+            for (doc in apSnap.documents) {
+                try {
+                    val id = doc.getLong("id") ?: (doc.id.replace("ap_", "").toLongOrNull() ?: 0L)
+                    val title = doc.getString("title") ?: ""
+                    val mode = doc.getString("periodMode") ?: "MONTHLY"
+                    val archivedAt = doc.getLong("archivedAt") ?: System.currentTimeMillis()
+                    val limit = doc.getDouble("budgetLimit") ?: 0.0
+                    val spent = doc.getDouble("totalSpent") ?: 0.0
+                    val sched = doc.getDouble("totalScheduled") ?: 0.0
+                    val symbol = doc.getString("currencySymbol") ?: "$"
+                    val note = doc.getString("note") ?: ""
+                    val txsJson = doc.getString("transactionsJson") ?: "[]"
+                    val schJson = doc.getString("scheduledJson") ?: "[]"
+                    val isClosed = doc.getBoolean("isClosed") ?: false
+
+                    if (title.isNotBlank()) {
+                        apList.add(
+                            ArchivedPeriodEntity(
+                                id = id,
+                                title = title,
+                                periodMode = mode,
+                                archivedAt = archivedAt,
+                                budgetLimit = limit,
+                                totalSpent = spent,
+                                totalScheduled = sched,
+                                currencySymbol = symbol,
+                                note = note,
+                                transactionsJson = txsJson,
+                                scheduledJson = schJson,
+                                isClosed = isClosed
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing cloud archive: ${e.message}")
+                }
+            }
+
+            _syncStatus.value = _syncStatus.value.copy(
+                isConnected = true,
+                cloudTransactionsCount = txList.size,
+                cloudBudgetsCount = bgList.size,
+                cloudScheduledCount = scList.size,
+                lastSyncTimestamp = System.currentTimeMillis(),
+                syncStatusText = "🟢 Traídos datos de Gmail (${txList.size} movs)"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching user cloud data: ${e.message}", e)
+        }
+
+        CloudDataSnapshot(
+            transactions = txList,
+            budgets = bgList,
+            scheduledExpenses = scList,
+            extraordinaryFunds = efList,
+            archivedPeriods = apList
+        )
     }
 
     private fun setupRealtimeListeners() {
         val db = firestore ?: return
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) {
+            clearListeners()
+            return
+        }
         clearListeners()
 
         val userDoc = db.collection("finanzas_users").document(activeUserId)
@@ -338,6 +566,7 @@ class FirebaseFinanceManager(
     // --- WRITE OPERATIONS TO FIRESTORE (Real-time Cloud Sync) ---
 
     fun saveTransactionToCloud(tx: TransactionEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = if (tx.id > 0) "tx_${tx.id}" else "tx_${tx.timestamp}_${tx.title.hashCode()}"
         val data = hashMapOf(
@@ -366,6 +595,7 @@ class FirebaseFinanceManager(
     }
 
     fun deleteTransactionFromCloud(tx: TransactionEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = "tx_${tx.id}"
         db.collection("finanzas_users").document(activeUserId)
@@ -374,6 +604,7 @@ class FirebaseFinanceManager(
     }
 
     fun saveBudgetToCloud(b: BudgetEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = "bg_${b.category.replace("/", "_")}"
         val data = hashMapOf(
@@ -388,6 +619,7 @@ class FirebaseFinanceManager(
     }
 
     fun saveScheduledExpenseToCloud(s: ScheduledExpenseEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = if (s.id > 0) "se_${s.id}" else "se_${s.dueDate}_${s.title.hashCode()}"
         val data = hashMapOf(
@@ -409,6 +641,7 @@ class FirebaseFinanceManager(
     }
 
     fun deleteScheduledExpenseFromCloud(s: ScheduledExpenseEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = "se_${s.id}"
         db.collection("finanzas_users").document(activeUserId)
@@ -451,6 +684,7 @@ class FirebaseFinanceManager(
     }
 
     fun saveExtraordinaryFundToCloud(f: ExtraordinaryFundEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = if (f.id > 0) "ef_${f.id}" else "ef_${f.createdAt}_${f.title.hashCode()}"
         val data = hashMapOf(
@@ -469,6 +703,7 @@ class FirebaseFinanceManager(
     }
 
     fun deleteExtraordinaryFundFromCloud(f: ExtraordinaryFundEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = "ef_${f.id}"
         db.collection("finanzas_users").document(activeUserId)
@@ -477,6 +712,7 @@ class FirebaseFinanceManager(
     }
 
     fun saveArchivedPeriodToCloud(ap: ArchivedPeriodEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = if (ap.id > 0) "ap_${ap.id}" else "ap_${ap.archivedAt}_${ap.title.hashCode()}"
         val data = hashMapOf(
@@ -500,6 +736,7 @@ class FirebaseFinanceManager(
     }
 
     fun deleteArchivedPeriodFromCloud(ap: ArchivedPeriodEntity) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
         val docId = "ap_${ap.id}"
         db.collection("finanzas_users").document(activeUserId)
@@ -515,6 +752,7 @@ class FirebaseFinanceManager(
         funds: List<ExtraordinaryFundEntity>,
         archived: List<ArchivedPeriodEntity>
     ) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         _syncStatus.value = _syncStatus.value.copy(
             isSyncing = true,
             syncStatusText = "Sincronizando con Firebase..."

@@ -163,19 +163,48 @@ class FinanceRepository(
 
     suspend fun seedInitialDataIfEmpty(context: Context) {
         val prefs = context.getSharedPreferences("finanzas_clara_prefs", Context.MODE_PRIVATE)
-        val hasClearedToZero = prefs.getBoolean("has_cleared_to_zero_v3", false)
-        if (!hasClearedToZero) {
-            // First time launching this updated version: wipe everything completely to zero as requested
-            clearAllDatabaseAndCloud(context)
-        }
+        prefs.edit()
+            .putBoolean("has_cleared_to_zero_v3", true)
+            .putBoolean("has_seeded_initial_data_v2", true)
+            .apply()
     }
 
-    suspend fun clearAllData() {
+    suspend fun clearLocalDataOnly() {
         transactionDao.deleteAll()
         budgetDao.deleteAll()
         scheduledExpenseDao.deleteAll()
         extraordinaryFundDao.deleteAll()
         archivedPeriodDao.deleteAll()
+    }
+
+    suspend fun fetchAndRestoreAllFromCloud(email: String): Int {
+        val manager = firebaseManager ?: return 0
+        val snapshot = manager.fetchUserDataFromCloud(email)
+        clearLocalDataOnly()
+
+        if (snapshot.transactions.isNotEmpty()) {
+            transactionDao.insertAll(snapshot.transactions)
+        }
+        if (snapshot.budgets.isNotEmpty()) {
+            budgetDao.insertAll(snapshot.budgets)
+        }
+        snapshot.scheduledExpenses.forEach {
+            scheduledExpenseDao.insertScheduledExpense(it)
+        }
+        snapshot.extraordinaryFunds.forEach {
+            extraordinaryFundDao.insertFund(it)
+        }
+        snapshot.archivedPeriods.forEach {
+            archivedPeriodDao.insertArchivedPeriod(it)
+        }
+
+        return snapshot.transactions.size + snapshot.budgets.size +
+                snapshot.scheduledExpenses.size + snapshot.extraordinaryFunds.size +
+                snapshot.archivedPeriods.size
+    }
+
+    suspend fun clearAllData() {
+        clearLocalDataOnly()
     }
 
     suspend fun clearAllDatabaseAndCloud(context: Context) {

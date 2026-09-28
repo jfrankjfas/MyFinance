@@ -1,9 +1,9 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -26,10 +26,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.security.AppSecurityManager
 import com.example.ui.FinanceViewModel
 import com.example.ui.components.AddTransactionDialog
+import com.example.ui.components.SecurityLockScreen
 import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.BackupScreen
 import com.example.ui.screens.BudgetScreen
@@ -38,8 +41,6 @@ import com.example.ui.screens.ProfileScreen
 import com.example.ui.theme.FinanzasClaraTheme
 import com.example.ui.theme.PrimaryEmerald
 
-import androidx.compose.foundation.isSystemInDarkTheme
-
 enum class NavTab(val title: String, val icon: ImageVector) {
     HOME("Inicio", Icons.Default.Home),
     ANALYTICS("Análisis", Icons.Default.PieChart),
@@ -47,27 +48,54 @@ enum class NavTab(val title: String, val icon: ImageVector) {
     BACKUP("Respaldo", Icons.Default.Cloud)
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    private lateinit var securityManager: AppSecurityManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        securityManager = AppSecurityManager(this)
         enableEdgeToEdge()
         setContent {
             val viewModel: FinanceViewModel = viewModel()
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            val isLocked by securityManager.isLocked.collectAsStateWithLifecycle()
+
             val isDark = when (uiState.appTheme) {
                 "LIGHT" -> false
                 "DARK" -> true
                 else -> isSystemInDarkTheme()
             }
             FinanzasClaraTheme(darkTheme = isDark) {
-                MainAppScreen(viewModel = viewModel)
+                if (isLocked) {
+                    SecurityLockScreen(
+                        securityManager = securityManager,
+                        onUnlocked = { securityManager.unlock() }
+                    )
+                } else {
+                    MainAppScreen(
+                        viewModel = viewModel,
+                        securityManager = securityManager
+                    )
+                }
             }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Re-lock app when sent to background if security is enabled
+        if (::securityManager.isInitialized) {
+            securityManager.lock()
         }
     }
 }
 
 @Composable
-fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
+fun MainAppScreen(
+    viewModel: FinanceViewModel = viewModel(),
+    securityManager: AppSecurityManager? = null
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
     val aiErrorMessage by viewModel.aiErrorMessage.collectAsStateWithLifecycle()
@@ -104,9 +132,11 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
                 uiState = uiState,
                 onLogout = { viewModel.logoutUser() },
                 onLogin = { email, name -> viewModel.loginUser(email, name) },
+                onRestoreFromCloud = { viewModel.restoreFromCloud() },
                 onSetTheme = { viewModel.setAppTheme(it) },
                 onSetLanguage = { viewModel.setAppLanguage(it) },
                 onBack = { showProfileScreen = false },
+                securityManager = securityManager,
                 modifier = modifier
             )
         } else {
@@ -119,6 +149,8 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
                         onCurrencySelected = { viewModel.setCurrency(it) },
                         onCurrencyIndexSelected = { viewModel.setActiveCurrencyIndex(it) },
                         onProfileClick = { showProfileScreen = true },
+                        onGoToScheduledPayments = { selectedTabIndex = 2 },
+                        onResetToZero = { viewModel.clearAllDataToZero() },
                         modifier = modifier
                     )
                 }
