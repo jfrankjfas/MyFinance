@@ -402,7 +402,7 @@ fun BudgetScreen(
             }
         }
 
-        if (uiState.periodScheduledExpenses.isEmpty()) {
+        if (uiState.scheduledExpenses.isEmpty()) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -425,13 +425,13 @@ fun BudgetScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Sin gastos programados para este periodo",
+                            text = "Sin gastos programados registrados",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "Toca '+ Programar' para registrar facturas, renta o servicios.",
+                            text = "Toca '+ Programar' para registrar facturas, renta o servicios para cualquier fecha futura.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
@@ -439,7 +439,7 @@ fun BudgetScreen(
                 }
             }
         } else {
-            items(uiState.periodScheduledExpenses) { item ->
+            items(uiState.scheduledExpenses) { item ->
                 ScheduledExpenseRowItem(
                     item = item,
                     currencySymbol = uiState.currencySymbol,
@@ -753,12 +753,8 @@ fun AddScheduledExpenseDialog(
             context,
             { _, year, month, dayOfMonth ->
                 val newCal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, year)
-                    set(Calendar.MONTH, month)
-                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                    set(Calendar.HOUR_OF_DAY, 12)
-                    set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0)
+                    clear()
+                    set(year, month, dayOfMonth, 12, 0, 0)
                 }
                 selectedDueDateMs = newCal.timeInMillis
             },
@@ -859,13 +855,15 @@ fun AddScheduledExpenseDialog(
             }
         },
         confirmButton = {
+            val cleanAmount = amountText.replace(',', '.').trim()
+            val parsedAmount = cleanAmount.toDoubleOrNull() ?: 0.0
             Button(
                 onClick = {
-                    val amount = amountText.toDoubleOrNull() ?: 0.0
-                    if (title.isNotBlank() && amount > 0) {
-                        onConfirm(title, amount, selectedCategory, selectedDueDateMs, notifyReminder)
+                    if (title.isNotBlank() && parsedAmount > 0) {
+                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder)
                     }
                 },
+                enabled = title.isNotBlank() && parsedAmount > 0,
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald)
             ) {
                 Text("Programar")

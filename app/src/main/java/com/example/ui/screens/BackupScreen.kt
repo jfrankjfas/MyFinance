@@ -62,13 +62,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.BorderStroke
 import com.example.data.model.CurrencyItem
 import com.example.data.model.WorldCurrencies
 import com.example.ui.FinanceUiState
 import com.example.ui.theme.IncomeGreen
+import com.example.ui.theme.PrimaryEmerald
 import com.example.ui.theme.SleekOnPrimaryContainer
 import com.example.ui.theme.SleekPrimary
 import com.example.ui.theme.SleekPrimaryContainer
+import com.example.ui.theme.WarningAmber
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -84,6 +87,7 @@ fun BackupScreen(
     onClearImportMessage: () -> Unit,
     onLogout: () -> Unit = {},
     onLogin: (String, String) -> Unit = { _, _ -> },
+    onSyncFirebase: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -217,6 +221,103 @@ fun BackupScreen(
                                 Text("Conectar Cuenta Gmail", fontSize = 12.sp)
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Firebase Cloud Realtime Database Card
+        item {
+            val fbStatus = uiState.firebaseSyncStatus
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                border = BorderStroke(1.dp, PrimaryEmerald.copy(alpha = 0.35f))
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(PrimaryEmerald.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudDone,
+                                contentDescription = "Firebase Firestore",
+                                tint = PrimaryEmerald,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Base de Datos en Tiempo Real (Firebase)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (fbStatus.isConnected) "🟢 En vivo (Sincronización instantánea activa)" else fbStatus.syncStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (fbStatus.isConnected) PrimaryEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "Todos tus movimientos, gastos programados, fondos extraordinarios y presupuestos están respaldados en la nube de Firebase Firestore en tiempo real. Aunque cierres la app o cambies de dispositivo, tus datos no se perderán.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceAround
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${uiState.transactions.size}", fontWeight = FontWeight.Bold, color = PrimaryEmerald, fontSize = 16.sp)
+                                Text("Transacciones", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${uiState.budgets.size}", fontWeight = FontWeight.Bold, color = SleekPrimary, fontSize = 16.sp)
+                                Text("Presupuestos", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${uiState.scheduledExpenses.size}", fontWeight = FontWeight.Bold, color = WarningAmber, fontSize = 16.sp)
+                                Text("Programados", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Button(
+                        onClick = onSyncFirebase,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
+                        enabled = !fbStatus.isSyncing
+                    ) {
+                        Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (fbStatus.isSyncing) "Sincronizando con Firebase..." else "Forzar Sincronización Nube Firebase")
                     }
                 }
             }

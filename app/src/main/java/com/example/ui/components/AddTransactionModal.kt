@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -74,11 +76,12 @@ fun AddTransactionDialog(
     isAiLoading: Boolean,
     aiErrorMessage: String?,
     onDismiss: () -> Unit,
-    onAddManual: (title: String, amount: Double, category: String, type: String, note: String) -> Unit,
+    onAddManual: (title: String, amount: Double, category: String, type: String, note: String, timestamp: Long) -> Unit,
     onCategorizeRequested: (String, (AiCategorizedResult) -> Unit) -> Unit,
     onConfirmAddTransaction: (AiCategorizedResult) -> Unit,
     onClearAiError: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Manual, 1: AI Assistant
 
     // Manual Form states
@@ -88,6 +91,26 @@ fun AddTransactionDialog(
     var selectedCategory by remember { mutableStateOf("Alimentación") }
     var noteInput by remember { mutableStateOf("") }
     var isCategoryDropdownExpanded by remember { mutableStateOf(false) }
+
+    var selectedDateMs by remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+    val sdfDate = remember { java.text.SimpleDateFormat("dd 'de' MMMM, yyyy", java.util.Locale("es", "ES")) }
+
+    fun showDatePicker() {
+        val c = java.util.Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val newCal = java.util.Calendar.getInstance().apply {
+                    clear()
+                    set(year, month, dayOfMonth, 12, 0, 0)
+                }
+                selectedDateMs = newCal.timeInMillis
+            },
+            c.get(java.util.Calendar.YEAR),
+            c.get(java.util.Calendar.MONTH),
+            c.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -250,18 +273,48 @@ fun AddTransactionDialog(
                         singleLine = true
                     )
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Date Picker Field
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = sdfDate.format(java.util.Date(selectedDateMs)),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Fecha de Transacción") },
+                            trailingIcon = {
+                                IconButton(onClick = { showDatePicker() }) {
+                                    Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Default.CalendarToday,
+                                        contentDescription = "Seleccionar fecha",
+                                        tint = PrimaryEmerald
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { showDatePicker() }
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(20.dp))
 
                     Button(
                         onClick = {
-                            val parsedAmount = amountInput.toDoubleOrNull() ?: 0.0
+                            val cleanAmount = amountInput.replace(',', '.').trim()
+                            val parsedAmount = cleanAmount.toDoubleOrNull() ?: 0.0
                             if (titleInput.isNotBlank() && parsedAmount > 0) {
                                 onAddManual(
                                     titleInput.trim(),
                                     parsedAmount,
                                     selectedCategory,
                                     selectedType,
-                                    noteInput.trim()
+                                    noteInput.trim(),
+                                    selectedDateMs
                                 )
                                 onDismiss()
                             }
@@ -269,7 +322,7 @@ fun AddTransactionDialog(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
-                        enabled = titleInput.isNotBlank() && (amountInput.toDoubleOrNull() ?: 0.0) > 0
+                        enabled = titleInput.isNotBlank() && (amountInput.replace(',', '.').trim().toDoubleOrNull() ?: 0.0) > 0
                     ) {
                         Text("Guardar Transacción")
                     }

@@ -201,6 +201,7 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
                         onClearImportMessage = { viewModel.clearImportMessage() },
                         onLogout = { viewModel.logoutUser() },
                         onLogin = { email, name -> viewModel.loginUser(email, name) },
+                        onSyncFirebase = { viewModel.syncToFirebase() },
                         modifier = modifier
                     )
                 }
@@ -215,8 +216,8 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
                 isAiLoading = isAiLoading,
                 aiErrorMessage = aiErrorMessage,
                 onDismiss = { showAddDialog = false },
-                onAddManual = { title, amount, category, type, note ->
-                    viewModel.addTransaction(title, amount, category, type, note, isAi = false)
+                onAddManual = { title, amount, category, type, note, timestamp ->
+                    viewModel.addTransaction(title, amount, category, type, note, isAi = false, timestamp = timestamp)
                 },
                 onCategorizeRequested = { prompt, onResult ->
                     viewModel.processAiInput(prompt, onResult)

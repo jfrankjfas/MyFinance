@@ -11,6 +11,8 @@ import com.example.data.entity.ArchivedPeriodEntity
 import com.example.data.entity.BudgetEntity
 import com.example.data.entity.ScheduledExpenseEntity
 import com.example.data.entity.TransactionEntity
+import com.example.data.firebase.FirebaseFinanceManager
+import com.example.data.firebase.FirebaseSyncStatus
 import com.example.notification.NotificationHelper
 import org.json.JSONArray
 import org.json.JSONObject
@@ -105,18 +107,21 @@ data class FinanceUiState(
     val isAiLoading: Boolean = false,
     val aiErrorMessage: String? = null,
     val backupJson: String? = null,
-    val importMessage: String? = null
+    val importMessage: String? = null,
+    val firebaseSyncStatus: FirebaseSyncStatus = FirebaseSyncStatus()
 )
 
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
+    private val firebaseManager = FirebaseFinanceManager(application, viewModelScope)
     private val repository = FinanceRepository(
         db.transactionDao(),
         db.budgetDao(),
         db.scheduledExpenseDao(),
         db.archivedPeriodDao(),
-        db.extraordinaryFundDao()
+        db.extraordinaryFundDao(),
+        firebaseManager
     )
 
     private val _budgetPeriodMode = MutableStateFlow("MONTHLY") // "MONTHLY", "FORTNIGHT_1", "FORTNIGHT_2"
@@ -239,7 +244,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         _budgetPeriodMode,
         _currencyConfigState,
         _userSettingsState,
-        _aiState
+        _aiState,
+        firebaseManager.syncStatus
     ) { args ->
         @Suppress("UNCHECKED_CAST")
         val txs = args[0] as List<TransactionEntity>
@@ -255,6 +261,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val currConfig = args[6] as CurrencyConfig
         val settings = args[7] as UserSettingsState
         val aiState = args[8] as AiState
+        val fbSync = args[9] as FirebaseSyncStatus
 
         var rawIncome = 0.0
         var rawExpense = 0.0
@@ -292,16 +299,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val periodPendingRawTotal = periodPendingScheduled.sumOf { it.amount }
         val periodPendingActiveTotal = periodPendingRawTotal * multiplier
 
-        // Converted transactions list
-        val convertedTxs = txs.map { tx ->
+        // Converted transactions list (sorted with newest first)
+        val convertedTxs = txs.sortedByDescending { it.timestamp }.map { tx ->
             tx.copy(amount = tx.amount * multiplier)
         }
 
-        val convertedScheduled = scheduledList.map { s ->
+        // Converted scheduled expenses (sorted chronologically by due date)
+        val convertedScheduled = scheduledList.sortedBy { it.dueDate }.map { s ->
             s.copy(amount = s.amount * multiplier)
         }
 
-        val convertedPeriodScheduled = periodScheduled.map { s ->
+        val convertedPeriodScheduled = periodScheduled.sortedBy { it.dueDate }.map { s ->
             s.copy(amount = s.amount * multiplier)
         }
 
@@ -408,7 +416,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             isAiLoading = aiState.isAiLoading,
             aiErrorMessage = aiState.aiErrorMessage,
             backupJson = aiState.backupJson,
-            importMessage = aiState.importMessage
+            importMessage = aiState.importMessage,
+            firebaseSyncStatus = fbSync
         )
     }.stateIn(
         scope = viewModelScope,
@@ -417,8 +426,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     )
 
     init {
+        repository.bindFirebaseManager(firebaseManager)
         viewModelScope.launch {
-            repository.seedInitialDataIfEmpty()
+            repository.seedInitialDataIfEmpty(getApplication())
+        }
+    }
+
+    fun syncToFirebase() {
+        viewModelScope.launch {
+            repository.syncAllToCloud()
         }
     }
 
@@ -487,6 +503,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             _userEmail.value = email
             _userName.value = name
             _isGoogleDriveConnected.value = true
+            firebaseManager.updateUserAccount(email)
             val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
             _lastDriveSync.value = "Conectado ahora (${sdf.format(Date())})"
 
@@ -495,8 +512,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 repository.importDataFromJson(currentBackup)
                 _importMessage.value = "✅ Sesión iniciada con $email. Se restauró tu presupuesto respaldado."
             } else {
-                repository.seedInitialDataIfEmpty()
-                _importMessage.value = "✅ Sesión iniciada con $email."
+                _importMessage.value = "✅ Sesión iniciada con $email. Conectado a Firebase en tiempo real."
             }
         }
     }
@@ -563,7 +579,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         _csvExportData.value = null
     }
 
-    fun addTransaction(title: String, amount: Double, category: String, type: String, note: String = "", isAi: Boolean = false) {
+    fun addTransaction(title: String, amount: Double, category: String, type: String, note: String = "", isAi: Boolean = false, timestamp: Long = System.currentTimeMillis()) {
         viewModelScope.launch {
             val mult = uiState.value.activeConversionMultiplier
             val baseAmount = if (mult > 0) amount / mult else amount
@@ -573,7 +589,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = category,
                 type = type,
                 note = note,
-                isAiCategorized = isAi
+                isAiCategorized = isAi,
+                timestamp = timestamp
             )
             repository.addTransaction(newTx)
             checkBudgetAlertsAndNotify(category, baseAmount, type)

@@ -1,5 +1,6 @@
 package com.example.data
 
+import android.content.Context
 import com.example.data.dao.ArchivedPeriodDao
 import com.example.data.dao.BudgetDao
 import com.example.data.dao.ExtraordinaryFundDao
@@ -10,8 +11,12 @@ import com.example.data.entity.BudgetEntity
 import com.example.data.entity.ExtraordinaryFundEntity
 import com.example.data.entity.ScheduledExpenseEntity
 import com.example.data.entity.TransactionEntity
+import com.example.data.firebase.FirebaseFinanceManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,7 +25,8 @@ class FinanceRepository(
     private val budgetDao: BudgetDao,
     private val scheduledExpenseDao: ScheduledExpenseDao,
     private val archivedPeriodDao: ArchivedPeriodDao,
-    private val extraordinaryFundDao: ExtraordinaryFundDao
+    private val extraordinaryFundDao: ExtraordinaryFundDao,
+    var firebaseManager: FirebaseFinanceManager? = null
 ) {
     val allTransactions: Flow<List<TransactionEntity>> = transactionDao.getAllTransactions()
     val allBudgets: Flow<List<BudgetEntity>> = budgetDao.getAllBudgets()
@@ -28,59 +34,141 @@ class FinanceRepository(
     val allArchivedPeriods: Flow<List<ArchivedPeriodEntity>> = archivedPeriodDao.getAllArchivedPeriods()
     val allExtraordinaryFunds: Flow<List<ExtraordinaryFundEntity>> = extraordinaryFundDao.getAllFunds()
 
+    private val repositoryScope = CoroutineScope(Dispatchers.IO)
+
+    init {
+        setupFirebaseListeners()
+    }
+
+    fun bindFirebaseManager(manager: FirebaseFinanceManager) {
+        this.firebaseManager = manager
+        setupFirebaseListeners()
+    }
+
+    private fun setupFirebaseListeners() {
+        val manager = firebaseManager ?: return
+
+        manager.onRemoteTransactionsReceived = { remoteTxs ->
+            if (remoteTxs.isNotEmpty()) {
+                repositoryScope.launch {
+                    transactionDao.insertAll(remoteTxs)
+                }
+            }
+        }
+
+        manager.onRemoteBudgetsReceived = { remoteBudgets ->
+            if (remoteBudgets.isNotEmpty()) {
+                repositoryScope.launch {
+                    budgetDao.insertAll(remoteBudgets)
+                }
+            }
+        }
+
+        manager.onRemoteScheduledReceived = { remoteScheduled ->
+            if (remoteScheduled.isNotEmpty()) {
+                repositoryScope.launch {
+                    remoteScheduled.forEach { scheduledExpenseDao.insertScheduledExpense(it) }
+                }
+            }
+        }
+
+        manager.onRemoteFundsReceived = { remoteFunds ->
+            if (remoteFunds.isNotEmpty()) {
+                repositoryScope.launch {
+                    remoteFunds.forEach { extraordinaryFundDao.insertFund(it) }
+                }
+            }
+        }
+
+        manager.onRemoteArchivedReceived = { remoteArchived ->
+            if (remoteArchived.isNotEmpty()) {
+                repositoryScope.launch {
+                    remoteArchived.forEach { archivedPeriodDao.insertArchivedPeriod(it) }
+                }
+            }
+        }
+    }
+
     suspend fun archivePeriod(period: ArchivedPeriodEntity): Long {
-        return archivedPeriodDao.insertArchivedPeriod(period)
+        val id = archivedPeriodDao.insertArchivedPeriod(period)
+        val entityWithId = if (period.id == 0L) period.copy(id = id) else period
+        firebaseManager?.saveArchivedPeriodToCloud(entityWithId)
+        return id
     }
 
     suspend fun updateArchivedPeriod(period: ArchivedPeriodEntity) {
         archivedPeriodDao.insertArchivedPeriod(period)
+        firebaseManager?.saveArchivedPeriodToCloud(period)
     }
 
     suspend fun deleteArchivedPeriod(period: ArchivedPeriodEntity) {
         archivedPeriodDao.deleteArchivedPeriod(period)
+        firebaseManager?.deleteArchivedPeriodFromCloud(period)
     }
 
     suspend fun addExtraordinaryFund(fund: ExtraordinaryFundEntity): Long {
-        return extraordinaryFundDao.insertFund(fund)
+        val id = extraordinaryFundDao.insertFund(fund)
+        val fundWithId = if (fund.id == 0L) fund.copy(id = id) else fund
+        firebaseManager?.saveExtraordinaryFundToCloud(fundWithId)
+        return id
     }
 
     suspend fun updateExtraordinaryFund(fund: ExtraordinaryFundEntity) {
         extraordinaryFundDao.insertFund(fund)
+        firebaseManager?.saveExtraordinaryFundToCloud(fund)
     }
 
     suspend fun deleteExtraordinaryFund(fund: ExtraordinaryFundEntity) {
         extraordinaryFundDao.deleteFund(fund)
+        firebaseManager?.deleteExtraordinaryFundFromCloud(fund)
     }
 
     suspend fun addTransaction(transaction: TransactionEntity) {
-        transactionDao.insertTransaction(transaction)
+        val id = transactionDao.insertTransaction(transaction)
+        val txWithId = if (transaction.id == 0) transaction.copy(id = id.toInt()) else transaction
+        firebaseManager?.saveTransactionToCloud(txWithId)
     }
 
     suspend fun updateTransaction(transaction: TransactionEntity) {
         transactionDao.updateTransaction(transaction)
+        firebaseManager?.saveTransactionToCloud(transaction)
     }
 
     suspend fun deleteTransaction(transaction: TransactionEntity) {
         transactionDao.deleteTransaction(transaction)
+        firebaseManager?.deleteTransactionFromCloud(transaction)
     }
 
     suspend fun saveBudget(budget: BudgetEntity) {
         budgetDao.insertOrUpdateBudget(budget)
+        firebaseManager?.saveBudgetToCloud(budget)
     }
 
     suspend fun addScheduledExpense(expense: ScheduledExpenseEntity): Long {
-        return scheduledExpenseDao.insertScheduledExpense(expense)
+        val id = scheduledExpenseDao.insertScheduledExpense(expense)
+        val expWithId = if (expense.id == 0L) expense.copy(id = id) else expense
+        firebaseManager?.saveScheduledExpenseToCloud(expWithId)
+        return id
     }
 
     suspend fun updateScheduledExpense(expense: ScheduledExpenseEntity) {
         scheduledExpenseDao.updateScheduledExpense(expense)
+        firebaseManager?.saveScheduledExpenseToCloud(expense)
     }
 
     suspend fun deleteScheduledExpense(expense: ScheduledExpenseEntity) {
         scheduledExpenseDao.deleteScheduledExpense(expense)
+        firebaseManager?.deleteScheduledExpenseFromCloud(expense)
     }
 
-    suspend fun seedInitialDataIfEmpty() {
+    suspend fun seedInitialDataIfEmpty(context: Context) {
+        val prefs = context.getSharedPreferences("finanzas_clara_prefs", Context.MODE_PRIVATE)
+        val alreadySeeded = prefs.getBoolean("has_seeded_initial_data_v2", false)
+        if (alreadySeeded) return
+
+        // Mark as initialized immediately so sample data is never re-seeded on next app launch
+        prefs.edit().putBoolean("has_seeded_initial_data_v2", true).commit()
+
         val currentTxList = allTransactions.first()
         if (currentTxList.isEmpty()) {
             val now = System.currentTimeMillis()
@@ -109,7 +197,7 @@ class FinanceRepository(
                     category = "Transporte",
                     type = "EXPENSE",
                     timestamp = now - (12 * 3600000L),
-                    note = "Estación YPF"
+                    note = "Estación de combustible"
                 ),
                 TransactionEntity(
                     title = "Cine y Snacks",
@@ -126,7 +214,7 @@ class FinanceRepository(
                     category = "Servicios",
                     type = "EXPENSE",
                     timestamp = now - (3 * day),
-                    note = "Factura del mes"
+                    note = "Factura de fibra óptica"
                 )
             )
             transactionDao.insertAll(sampleTransactions)
@@ -150,7 +238,7 @@ class FinanceRepository(
                     notifyReminder = true
                 ),
                 ScheduledExpenseEntity(
-                    title = "Servicio de Luz (ENEL)",
+                    title = "Servicio de Luz",
                     amount = 42.0,
                     category = "Servicios",
                     dueDate = now + (7 * day),
@@ -159,7 +247,21 @@ class FinanceRepository(
                 )
             )
             sampleScheduled.forEach { scheduledExpenseDao.insertScheduledExpense(it) }
+
+            // Sync initial state to cloud
+            sampleTransactions.forEach { firebaseManager?.saveTransactionToCloud(it) }
+            sampleBudgets.forEach { firebaseManager?.saveBudgetToCloud(it) }
+            sampleScheduled.forEach { firebaseManager?.saveScheduledExpenseToCloud(it) }
         }
+    }
+
+    suspend fun syncAllToCloud() {
+        val txs = allTransactions.first()
+        val bgs = allBudgets.first()
+        val sched = allScheduledExpenses.first()
+        val funds = allExtraordinaryFunds.first()
+        val arch = allArchivedPeriods.first()
+        firebaseManager?.syncAllLocalToCloud(txs, bgs, sched, funds, arch)
     }
 
     suspend fun clearAllData() {
@@ -248,6 +350,10 @@ class FinanceRepository(
 
             transactionDao.insertAll(newTransactions)
             budgetDao.insertAll(newBudgets)
+
+            // Push imported data to Firebase
+            newTransactions.forEach { firebaseManager?.saveTransactionToCloud(it) }
+            newBudgets.forEach { firebaseManager?.saveBudgetToCloud(it) }
             true
         } catch (e: Exception) {
             e.printStackTrace()
