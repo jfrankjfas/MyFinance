@@ -165,6 +165,9 @@ class FirebaseFinanceManager(
                             val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
                             val note = doc.getString("note") ?: ""
                             val isAi = doc.getBoolean("isAiCategorized") ?: false
+                            val attachment = doc.getString("attachmentUri")
+                            val dueDate = doc.getLong("dueDate")
+                            val hasReminder = doc.getBoolean("hasReminderScheduled") ?: false
 
                             if (title.isNotBlank()) {
                                 list.add(
@@ -176,7 +179,10 @@ class FirebaseFinanceManager(
                                         type = type,
                                         timestamp = timestamp,
                                         note = note,
-                                        isAiCategorized = isAi
+                                        isAiCategorized = isAi,
+                                        attachmentUri = attachment,
+                                        dueDate = dueDate,
+                                        hasReminderScheduled = hasReminder
                                     )
                                 )
                             }
@@ -227,6 +233,9 @@ class FirebaseFinanceManager(
                         val dueDate = doc.getLong("dueDate") ?: System.currentTimeMillis()
                         val isPaid = doc.getBoolean("isPaid") ?: false
                         val notify = doc.getBoolean("notifyReminder") ?: true
+                        val attachment = doc.getString("attachmentUri")
+                        val note = doc.getString("note") ?: ""
+                        val isEmergency = doc.getBoolean("isEmergencyPriority") ?: false
                         list.add(
                             ScheduledExpenseEntity(
                                 id = id,
@@ -235,7 +244,10 @@ class FirebaseFinanceManager(
                                 category = category,
                                 dueDate = dueDate,
                                 isPaid = isPaid,
-                                notifyReminder = notify
+                                notifyReminder = notify,
+                                attachmentUri = attachment,
+                                note = note,
+                                isEmergencyPriority = isEmergency
                             )
                         )
                     }
@@ -337,6 +349,9 @@ class FirebaseFinanceManager(
             "timestamp" to tx.timestamp,
             "note" to tx.note,
             "isAiCategorized" to tx.isAiCategorized,
+            "attachmentUri" to (tx.attachmentUri ?: ""),
+            "dueDate" to (tx.dueDate ?: 0L),
+            "hasReminderScheduled" to tx.hasReminderScheduled,
             "updatedAt" to System.currentTimeMillis()
         )
         db.collection("finanzas_users").document(activeUserId)
@@ -383,6 +398,9 @@ class FirebaseFinanceManager(
             "dueDate" to s.dueDate,
             "isPaid" to s.isPaid,
             "notifyReminder" to s.notifyReminder,
+            "attachmentUri" to (s.attachmentUri ?: ""),
+            "note" to s.note,
+            "isEmergencyPriority" to s.isEmergencyPriority,
             "updatedAt" to System.currentTimeMillis()
         )
         db.collection("finanzas_users").document(activeUserId)
@@ -396,6 +414,40 @@ class FirebaseFinanceManager(
         db.collection("finanzas_users").document(activeUserId)
             .collection("scheduled_expenses").document(docId)
             .delete()
+    }
+
+    // Wipes all user collections in Firestore to start 100% completely from zero
+    suspend fun clearAllUserDataFromCloud() = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val db = firestore ?: return@withContext
+        try {
+            _syncStatus.value = _syncStatus.value.copy(
+                isSyncing = true,
+                syncStatusText = "Limpiando datos en la nube..."
+            )
+            val userDoc = db.collection("finanzas_users").document(activeUserId)
+            val subcollections = listOf("transactions", "budgets", "scheduled_expenses", "extraordinary_funds", "archived_periods")
+            for (colName in subcollections) {
+                val snapshot = userDoc.collection(colName).get().await()
+                for (doc in snapshot.documents) {
+                    doc.reference.delete().await()
+                }
+            }
+            _syncStatus.value = _syncStatus.value.copy(
+                isSyncing = false,
+                cloudTransactionsCount = 0,
+                cloudBudgetsCount = 0,
+                cloudScheduledCount = 0,
+                lastSyncTimestamp = System.currentTimeMillis(),
+                syncStatusText = "🟢 Firebase: Base de datos limpia (Desde Cero)"
+            )
+            Log.d(TAG, "Successfully wiped all cloud collections for user $activeUserId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing cloud data: ${e.message}", e)
+            _syncStatus.value = _syncStatus.value.copy(
+                isSyncing = false,
+                syncStatusText = "Error al limpiar la nube"
+            )
+        }
     }
 
     fun saveExtraordinaryFundToCloud(f: ExtraordinaryFundEntity) {

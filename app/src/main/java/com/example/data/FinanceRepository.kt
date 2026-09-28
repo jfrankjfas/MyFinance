@@ -163,96 +163,34 @@ class FinanceRepository(
 
     suspend fun seedInitialDataIfEmpty(context: Context) {
         val prefs = context.getSharedPreferences("finanzas_clara_prefs", Context.MODE_PRIVATE)
-        val alreadySeeded = prefs.getBoolean("has_seeded_initial_data_v2", false)
-        if (alreadySeeded) return
-
-        // Mark as initialized immediately so sample data is never re-seeded on next app launch
-        prefs.edit().putBoolean("has_seeded_initial_data_v2", true).commit()
-
-        val currentTxList = allTransactions.first()
-        if (currentTxList.isEmpty()) {
-            val now = System.currentTimeMillis()
-            val day = 86400000L
-
-            val sampleTransactions = listOf(
-                TransactionEntity(
-                    title = "Sueldo Mensual",
-                    amount = 1800.0,
-                    category = "Sueldo",
-                    type = "INCOME",
-                    timestamp = now - (2 * day),
-                    note = "Depósito nómina empresa"
-                ),
-                TransactionEntity(
-                    title = "Supermercado Semanal",
-                    amount = 125.50,
-                    category = "Alimentación",
-                    type = "EXPENSE",
-                    timestamp = now - (1 * day),
-                    note = "Compra de abarrotes y verduras"
-                ),
-                TransactionEntity(
-                    title = "Carga de Gasolina",
-                    amount = 45.0,
-                    category = "Transporte",
-                    type = "EXPENSE",
-                    timestamp = now - (12 * 3600000L),
-                    note = "Estación de combustible"
-                ),
-                TransactionEntity(
-                    title = "Cine y Snacks",
-                    amount = 28.0,
-                    category = "Entretenimiento",
-                    type = "EXPENSE",
-                    timestamp = now - (6 * 3600000L),
-                    note = "Entradas para 2 personas",
-                    isAiCategorized = true
-                ),
-                TransactionEntity(
-                    title = "Servicio de Internet",
-                    amount = 35.0,
-                    category = "Servicios",
-                    type = "EXPENSE",
-                    timestamp = now - (3 * day),
-                    note = "Factura de fibra óptica"
-                )
-            )
-            transactionDao.insertAll(sampleTransactions)
-
-            val sampleBudgets = listOf(
-                BudgetEntity(category = "GENERAL", limitAmount = 1200.0, alertThresholdPercent = 80),
-                BudgetEntity(category = "Alimentación", limitAmount = 400.0, alertThresholdPercent = 80),
-                BudgetEntity(category = "Transporte", limitAmount = 150.0, alertThresholdPercent = 80),
-                BudgetEntity(category = "Entretenimiento", limitAmount = 120.0, alertThresholdPercent = 80),
-                BudgetEntity(category = "Servicios", limitAmount = 100.0, alertThresholdPercent = 80)
-            )
-            budgetDao.insertAll(sampleBudgets)
-
-            val sampleScheduled = listOf(
-                ScheduledExpenseEntity(
-                    title = "Pago de Alquiler / Renta",
-                    amount = 350.0,
-                    category = "Vivienda",
-                    dueDate = now + (3 * day),
-                    isPaid = false,
-                    notifyReminder = true
-                ),
-                ScheduledExpenseEntity(
-                    title = "Servicio de Luz",
-                    amount = 42.0,
-                    category = "Servicios",
-                    dueDate = now + (7 * day),
-                    isPaid = false,
-                    notifyReminder = true
-                )
-            )
-            sampleScheduled.forEach { scheduledExpenseDao.insertScheduledExpense(it) }
-
-            // Sync initial state to cloud
-            sampleTransactions.forEach { firebaseManager?.saveTransactionToCloud(it) }
-            sampleBudgets.forEach { firebaseManager?.saveBudgetToCloud(it) }
-            sampleScheduled.forEach { firebaseManager?.saveScheduledExpenseToCloud(it) }
+        val hasClearedToZero = prefs.getBoolean("has_cleared_to_zero_v3", false)
+        if (!hasClearedToZero) {
+            // First time launching this updated version: wipe everything completely to zero as requested
+            clearAllDatabaseAndCloud(context)
         }
+    }
+
+    suspend fun clearAllData() {
+        transactionDao.deleteAll()
+        budgetDao.deleteAll()
+        scheduledExpenseDao.deleteAll()
+        extraordinaryFundDao.deleteAll()
+        archivedPeriodDao.deleteAll()
+    }
+
+    suspend fun clearAllDatabaseAndCloud(context: Context) {
+        // 1. Wipe all local Room tables
+        clearAllData()
+
+        // 2. Wipe all remote Firestore collections for this user
+        firebaseManager?.clearAllUserDataFromCloud()
+
+        // 3. Mark preferences so sample data is never generated
+        val prefs = context.getSharedPreferences("finanzas_clara_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean("has_cleared_to_zero_v3", true)
+            .putBoolean("has_seeded_initial_data_v2", true)
+            .commit()
     }
 
     suspend fun syncAllToCloud() {
@@ -262,12 +200,6 @@ class FinanceRepository(
         val funds = allExtraordinaryFunds.first()
         val arch = allArchivedPeriods.first()
         firebaseManager?.syncAllLocalToCloud(txs, bgs, sched, funds, arch)
-    }
-
-    suspend fun clearAllData() {
-        transactionDao.deleteAll()
-        budgetDao.deleteAll()
-        scheduledExpenseDao.deleteAll()
     }
 
     suspend fun exportDataToJson(): String {

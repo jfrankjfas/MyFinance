@@ -141,9 +141,9 @@ fun TopCurrencyHeader(
                         modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
                     )
                     Text(
-                        text = "1 USD base",
+                        text = "Base: C$ Córdobas Principal",
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Bold,
                         color = SleekPrimary
                     )
                 }
@@ -187,8 +187,8 @@ fun TopCurrencyHeader(
                                 }
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = currency.symbol,
-                                    fontSize = 11.sp,
+                                    text = if (idx == 0) "${currency.symbol} (Principal)" else currency.symbol,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = if (isSelected) Color.White.copy(alpha = 0.9f) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -201,13 +201,7 @@ fun TopCurrencyHeader(
 
                 // Rate Conversion Badge Indicator
                 val activeCurr = favoriteCurrencies.getOrNull(activeCurrencyIndex)
-                val baseCurr = favoriteCurrencies.getOrNull(0) ?: CurrencyItem("USD", "$", "Base")
-                val activeRate = when (activeCurrencyIndex) {
-                    0 -> 1.0
-                    1 -> exchangeRate2
-                    2 -> exchangeRate3
-                    else -> 1.0
-                }
+                val baseCurr = favoriteCurrencies.getOrNull(0) ?: CurrencyItem("NIO", "C$", "Nicaragua (Córdoba)", "🇳🇮", 36.6243, 1.0)
 
                 Row(
                     modifier = Modifier
@@ -229,8 +223,11 @@ fun TopCurrencyHeader(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (activeCurrencyIndex == 0) "Mostrando en moneda base ${baseCurr.code} (${baseCurr.symbol})"
-                            else "Conversión: 1 ${baseCurr.code} = ${String.format("%.2f", activeRate)} ${activeCurr?.symbol ?: ""} (${activeCurr?.code ?: ""})",
+                            text = when (activeCurrencyIndex) {
+                                0 -> "Moneda Principal activa: Córdobas (${baseCurr.symbol}) • Tasa Oficial: 1 USD = ${String.format(java.util.Locale.US, "%.4f", exchangeRate2)} C$"
+                                1 -> "Equivalencia en Dólares ($): 1 USD = ${String.format(java.util.Locale.US, "%.4f", exchangeRate2)} C$ • Base C$ Inmutable"
+                                else -> "Equivalencia en Euros (€): 1 EUR = ${String.format(java.util.Locale.US, "%.2f", exchangeRate3)} C$ • Base C$ Inmutable"
+                            },
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = SleekOnPrimaryContainer

@@ -531,23 +531,39 @@ fun BackupScreen(
 
                         Column {
                             Text(
-                                text = "Configuración de Monedas (3 Parámetros)",
+                                text = "Configuración Multimoneda (Base: Córdobas C$)",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Elige 3 monedas favoritas de cualquier país para alternar rápidamente.",
+                                text = "La moneda principal siempre es Córdobas (C$). Las secundarias se calculan como equivalencias.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = SleekPrimaryContainer.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "💡 Regla de Moneda Principal: La base siempre es Córdobas (C$). Los montos se guardan en Córdobas para evitar que los decimales del tipo de cambio alteren tus cifras. El primer cálculo de Córdobas es el que manda.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = SleekOnPrimaryContainer,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Selector Moneda 1
+                    // Selector Moneda 1 (Principal Fija)
                     CurrencyDropdownSelector(
-                        label = "Moneda 1 (Parámetro Principal / Base)",
+                        label = "Moneda 1 (Moneda Principal / Base Inmutable)",
                         selectedCurrency = selectedC1,
                         allCurrencies = WorldCurrencies.ALL,
                         expanded = showDropdown1,
@@ -562,7 +578,7 @@ fun BackupScreen(
 
                     // Selector Moneda 2 + Rate
                     CurrencyDropdownSelector(
-                        label = "Moneda 2 (Secundaria, ej. NIO C$ Córdobas)",
+                        label = "Moneda 2 (Secundaria, ej. USD $ Dólar)",
                         selectedCurrency = selectedC2,
                         allCurrencies = WorldCurrencies.ALL,
                         expanded = showDropdown2,
@@ -570,7 +586,7 @@ fun BackupScreen(
                         onSelect = {
                             selectedC2 = it
                             showDropdown2 = false
-                            rate2Input = it.defaultRateToUsd.toString()
+                            rate2Input = it.defaultRateToNio.toString()
                         }
                     )
 
@@ -579,7 +595,8 @@ fun BackupScreen(
                     OutlinedTextField(
                         value = rate2Input,
                         onValueChange = { rate2Input = it },
-                        label = { Text("Tasa de cambio: 1 ${selectedC1.code} = X ${selectedC2.symbol}") },
+                        label = { Text("Tasa Oficial: 1 ${selectedC2.code} = X C$ Córdobas") },
+                        placeholder = { Text("36.6243") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
@@ -597,7 +614,7 @@ fun BackupScreen(
                         onSelect = {
                             selectedC3 = it
                             showDropdown3 = false
-                            rate3Input = it.defaultRateToUsd.toString()
+                            rate3Input = it.defaultRateToNio.toString()
                         }
                     )
 
@@ -606,7 +623,8 @@ fun BackupScreen(
                     OutlinedTextField(
                         value = rate3Input,
                         onValueChange = { rate3Input = it },
-                        label = { Text("Tasa de cambio: 1 ${selectedC1.code} = X ${selectedC3.symbol}") },
+                        label = { Text("Tasa Oficial: 1 ${selectedC3.code} = X C$ Córdobas") },
+                        placeholder = { Text("39.81") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
@@ -616,10 +634,10 @@ fun BackupScreen(
 
                     Button(
                         onClick = {
-                            val r2 = rate2Input.toDoubleOrNull() ?: selectedC2.defaultRateToUsd
-                            val r3 = rate3Input.toDoubleOrNull() ?: selectedC3.defaultRateToUsd
+                            val r2 = rate2Input.toDoubleOrNull() ?: selectedC2.defaultRateToNio
+                            val r3 = rate3Input.toDoubleOrNull() ?: selectedC3.defaultRateToNio
                             onSetThreeCurrencies(selectedC1, selectedC2, selectedC3, r2, r3)
-                            Toast.makeText(context, "3 Monedas y Tasas de cambio actualizadas", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Configuración guardada: Córdobas como moneda principal", Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -627,7 +645,7 @@ fun BackupScreen(
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Guardar 3 Monedas y Tasas de Cambio")
+                        Text("Guardar Configuración de Monedas")
                     }
 
 

@@ -12,5 +12,8 @@ data class TransactionEntity(
     val type: String, // "EXPENSE" or "INCOME"
     val timestamp: Long = System.currentTimeMillis(),
     val note: String = "",
-    val isAiCategorized: Boolean = false
+    val isAiCategorized: Boolean = false,
+    val attachmentUri: String? = null,
+    val dueDate: Long? = null,
+    val hasReminderScheduled: Boolean = false
 )

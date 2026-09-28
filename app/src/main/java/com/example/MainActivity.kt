@@ -137,8 +137,11 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
                         onSetBudgetPeriodMode = { mode ->
                             viewModel.setBudgetPeriodMode(mode)
                         },
-                        onAddScheduledExpense = { title, amount, cat, dueDate, notify ->
-                            viewModel.addScheduledExpense(title, amount, cat, dueDate, notify)
+                        onAddScheduledExpense = { title, amount, cat, dueDate, notify, attachmentUri, note ->
+                            viewModel.addScheduledExpense(title, amount, cat, dueDate, notify, attachmentUri, note)
+                        },
+                        onScanReceiptWithDueDate = { uri, onResult ->
+                            viewModel.scanReceiptWithDueDate(uri, onResult)
                         },
                         onMarkScheduledExpensePaid = { expense ->
                             viewModel.markScheduledExpenseAsPaid(expense)
@@ -213,11 +216,25 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
         if (showAddDialog) {
             AddTransactionDialog(
                 currencySymbol = uiState.currencySymbol,
+                activeCurrencyIndex = uiState.activeCurrencyIndex,
+                exchangeRate2 = uiState.exchangeRate2,
+                exchangeRate3 = uiState.exchangeRate3,
                 isAiLoading = isAiLoading,
                 aiErrorMessage = aiErrorMessage,
                 onDismiss = { showAddDialog = false },
-                onAddManual = { title, amount, category, type, note, timestamp ->
-                    viewModel.addTransaction(title, amount, category, type, note, isAi = false, timestamp = timestamp)
+                onAddManual = { title, amount, category, type, note, timestamp, attachmentUri, dueDate, scheduleReminder ->
+                    viewModel.addTransaction(
+                        title = title,
+                        amount = amount,
+                        category = category,
+                        type = type,
+                        note = note,
+                        isAi = false,
+                        timestamp = timestamp,
+                        attachmentUri = attachmentUri,
+                        dueDate = dueDate,
+                        schedulePaymentReminder = scheduleReminder
+                    )
                 },
                 onCategorizeRequested = { prompt, onResult ->
                     viewModel.processAiInput(prompt, onResult)
@@ -234,6 +251,9 @@ fun MainAppScreen(viewModel: FinanceViewModel = viewModel()) {
                 },
                 onClearAiError = {
                     viewModel.clearAiError()
+                },
+                onScanReceiptWithDueDate = { uri, onResult ->
+                    viewModel.scanReceiptWithDueDate(uri, onResult)
                 }
             )
         }

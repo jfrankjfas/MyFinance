@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,15 +17,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Event
@@ -42,6 +46,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -53,7 +58,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -72,6 +79,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.layout.ContentScale
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
+import coil.compose.AsyncImage
+import com.example.ai.ReceiptScanResult
+import com.example.data.AttachmentStorageHelper
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Archive
 import com.example.data.entity.ArchivedPeriodEntity
@@ -99,9 +118,10 @@ fun BudgetScreen(
     uiState: FinanceUiState,
     onSaveBudgetLimit: (category: String, limit: Double, threshold: Int) -> Unit,
     onSetBudgetPeriodMode: (mode: String) -> Unit,
-    onAddScheduledExpense: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean) -> Unit,
+    onAddScheduledExpense: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String) -> Unit,
     onMarkScheduledExpensePaid: (expense: ScheduledExpenseEntity) -> Unit,
     onDeleteScheduledExpense: (expense: ScheduledExpenseEntity) -> Unit,
+    onScanReceiptWithDueDate: ((Uri, (ReceiptScanResult) -> Unit) -> Unit)? = null,
     onArchivePeriod: (title: String, note: String, clearPeriodData: Boolean) -> Unit = { _, _, _ -> },
     onDeleteArchivedPeriod: (ArchivedPeriodEntity) -> Unit = {},
     onCloseArchivedPeriod: (Long) -> Unit = {},
@@ -384,7 +404,7 @@ fun BudgetScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Notificaciones automáticas 1 día antes y el día de pago",
+                        text = "Notificaciones automáticas 2 días antes y 1 día antes del pago",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -440,7 +460,7 @@ fun BudgetScreen(
             }
         } else {
             items(uiState.scheduledExpenses) { item ->
-                ScheduledExpenseRowItem(
+                ScheduledExpenseItemCard(
                     item = item,
                     currencySymbol = uiState.currencySymbol,
                     onMarkPaid = { onMarkScheduledExpensePaid(item) },
@@ -563,8 +583,9 @@ fun BudgetScreen(
         AddScheduledExpenseDialog(
             currencySymbol = uiState.currencySymbol,
             onDismiss = { showAddScheduledDialog = false },
-            onConfirm = { title, amount, category, dueDate, notify ->
-                onAddScheduledExpense(title, amount, category, dueDate, notify)
+            onScanReceiptWithDueDate = onScanReceiptWithDueDate,
+            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note ->
+                onAddScheduledExpense(title, amount, category, dueDate, notify, attachmentUri, note)
                 showAddScheduledDialog = false
             }
         )
@@ -622,7 +643,7 @@ fun BudgetScreen(
 }
 
 @Composable
-fun ScheduledExpenseRowItem(
+fun ScheduledExpenseItemCard(
     item: ScheduledExpenseEntity,
     currencySymbol: String,
     onMarkPaid: () -> Unit,
@@ -631,8 +652,14 @@ fun ScheduledExpenseRowItem(
 ) {
     val sdf = SimpleDateFormat("dd 'de' MMM, yyyy", Locale("es", "ES"))
     val formattedDate = sdf.format(Date(item.dueDate))
-
     val categoryIcon = getCategoryIcon(item.category)
+
+    val now = System.currentTimeMillis()
+    val dayMs = 86400000L
+    val diffMs = item.dueDate - now
+    val daysRemaining = (diffMs / dayMs).toInt()
+
+    var showImageModal by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -640,6 +667,11 @@ fun ScheduledExpenseRowItem(
         colors = CardDefaults.cardColors(
             containerColor = if (item.isPaid) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
             else MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (!item.isPaid && daysRemaining in 0..2) ExpenseRed.copy(alpha = 0.4f)
+            else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
         )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -685,6 +717,68 @@ fun ScheduledExpenseRowItem(
                 )
             }
 
+            // Attachment and Urgency Badge
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Countdown Badge
+                if (item.isPaid) {
+                    Surface(
+                        color = IncomeGreen.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "✔ PAGADO",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = IncomeGreen,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                } else {
+                    val (badgeText, badgeColor) = when {
+                        daysRemaining == 2 -> "⏳ VENCE EN 2 DÍAS (Alerta activa)" to WarningAmber
+                        daysRemaining == 1 -> "🚨 ¡VENCE MAÑANA! (Alerta activa)" to ExpenseRed
+                        daysRemaining == 0 -> "📅 ¡VENCE HOY!" to ExpenseRed
+                        daysRemaining < 0 -> "⚠️ VENCIDO HACE ${-daysRemaining} DÍAS" to ExpenseRed
+                        else -> "🗓️ VENCE EN $daysRemaining DÍAS" to MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Surface(
+                        color = badgeColor.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                // Attachment preview thumbnail if any
+                if (!item.attachmentUri.isNullOrBlank()) {
+                    Surface(
+                        color = PrimaryEmerald.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.clickable { showImageModal = true }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Default.AttachFile, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ver Recibo", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = PrimaryEmerald)
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
 
             Row(
@@ -692,22 +786,11 @@ fun ScheduledExpenseRowItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (item.isPaid) IncomeGreen.copy(alpha = 0.15f)
-                            else WarningAmber.copy(alpha = 0.15f)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = if (item.isPaid) "✔ PAGADO" else "⏰ PENDIENTE",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (item.isPaid) IncomeGreen else WarningAmber
-                    )
-                }
+                Text(
+                    text = if (item.notifyReminder) "🔔 Alerta 2 días y 1 día antes" else "🔕 Sin recordatorio",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!item.isPaid) {
@@ -725,6 +808,49 @@ fun ScheduledExpenseRowItem(
             }
         }
     }
+
+    if (showImageModal && !item.attachmentUri.isNullOrBlank()) {
+        Dialog(onDismissRequest = { showImageModal = false }) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Comprobante: ${item.title}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(onClick = { showImageModal = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cerrar")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(350.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    ) {
+                        AsyncImage(
+                            model = item.attachmentUri,
+                            contentDescription = "Comprobante",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -732,7 +858,8 @@ fun ScheduledExpenseRowItem(
 fun AddScheduledExpenseDialog(
     currencySymbol: String,
     onDismiss: () -> Unit,
-    onConfirm: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean) -> Unit
+    onScanReceiptWithDueDate: ((Uri, (ReceiptScanResult) -> Unit) -> Unit)? = null,
+    onConfirm: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String) -> Unit
 ) {
     val context = LocalContext.current
     var title by remember { mutableStateOf("") }
@@ -742,10 +869,37 @@ fun AddScheduledExpenseDialog(
     var categoryExpanded by remember { mutableStateOf(false) }
 
     val calendar = remember { Calendar.getInstance() }
-    var selectedDueDateMs by remember { mutableLongStateOf(calendar.timeInMillis) }
+    var selectedDueDateMs by remember { mutableLongStateOf(calendar.timeInMillis + (3 * 86400000L)) }
 
     val sdf = SimpleDateFormat("dd 'de' MMMM, yyyy", Locale("es", "ES"))
     val formattedSelectedDate = sdf.format(Date(selectedDueDateMs))
+
+    var attachedImageUri by remember { mutableStateOf<String?>(null) }
+    var isScanningAttachment by remember { mutableStateOf(false) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val persistentUri = AttachmentStorageHelper.copyUriToInternalStorage(context, uri)
+            attachedImageUri = persistentUri ?: uri.toString()
+
+            val parsedUri = Uri.parse(attachedImageUri)
+            isScanningAttachment = true
+            onScanReceiptWithDueDate?.invoke(parsedUri) { res ->
+                isScanningAttachment = false
+                if (title.isBlank() && res.title.isNotBlank()) title = res.title
+                if (amountText.isBlank() && res.amount > 0) amountText = String.format(Locale.US, "%.2f", res.amount)
+                if (res.category.isNotBlank() && categoryList.contains(res.category)) selectedCategory = res.category
+                if (res.dueDateMs != null) {
+                    selectedDueDateMs = res.dueDateMs
+                    notifyReminder = true
+                }
+            } ?: run {
+                isScanningAttachment = false
+            }
+        }
+    }
 
     fun showDatePicker() {
         val c = Calendar.getInstance().apply { timeInMillis = selectedDueDateMs }
@@ -766,13 +920,66 @@ fun AddScheduledExpenseDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Programar Pago / Gasto", fontWeight = FontWeight.Bold) },
+        title = { Text("Programar Pago / Vencimiento", fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Optional Attachment Picker
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AttachFile, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (attachedImageUri == null) "Adjuntar Recibo" else "Recibo Adjuntado",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        if (attachedImageUri == null) {
+                            Button(
+                                onClick = {
+                                    photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("Foto", fontSize = 12.sp)
+                            }
+                        } else {
+                            IconButton(onClick = { attachedImageUri = null }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Quitar", tint = ExpenseRed, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+
+                if (isScanningAttachment) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = PrimaryEmerald)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Detectando fecha de pago en el recibo...", fontSize = 11.sp, color = PrimaryEmerald)
+                    }
+                }
+
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Concepto (Ej. Renta, Cable, Agua)") },
+                    label = { Text("Concepto (Ej. Renta, Factura Luz, Tarjeta)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -827,13 +1034,12 @@ fun AddScheduledExpenseDialog(
                         label = { Text("Fecha de Pago / Vencimiento") },
                         trailingIcon = {
                             IconButton(onClick = { showDatePicker() }) {
-                                Icon(Icons.Default.CalendarToday, contentDescription = "Seleccionar fecha", tint = PrimaryEmerald)
+                                Icon(Icons.Default.CalendarToday, contentDescription = "Seleccionar fecha", tint = WarningAmber)
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
-                    // Click overlay to trigger DatePicker on tapping anywhere on field
                     Box(
                         modifier = Modifier
                             .matchParentSize()
@@ -846,10 +1052,14 @@ fun AddScheduledExpenseDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("🔔 Notificar 1 día antes y el día de pago", style = MaterialTheme.typography.bodySmall)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("🔔 Recordatorio Automático", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                        Text("Notifica 2 días antes y 1 día antes del pago", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Switch(
                         checked = notifyReminder,
-                        onCheckedChange = { notifyReminder = it }
+                        onCheckedChange = { notifyReminder = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = WarningAmber)
                     )
                 }
             }
@@ -860,7 +1070,7 @@ fun AddScheduledExpenseDialog(
             Button(
                 onClick = {
                     if (title.isNotBlank() && parsedAmount > 0) {
-                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder)
+                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder, attachedImageUri, "")
                     }
                 },
                 enabled = title.isNotBlank() && parsedAmount > 0,

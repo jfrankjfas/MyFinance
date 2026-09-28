@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiCategorizedResult
 import com.example.ai.GeminiCategorizer
+import com.example.ai.ReceiptScanResult
 import com.example.data.AppDatabase
 import com.example.data.FinanceRepository
 import com.example.data.entity.ArchivedPeriodEntity
@@ -14,6 +15,7 @@ import com.example.data.entity.TransactionEntity
 import com.example.data.firebase.FirebaseFinanceManager
 import com.example.data.firebase.FirebaseSyncStatus
 import com.example.notification.NotificationHelper
+import com.example.notification.PaymentAlarmScheduler
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,10 +95,10 @@ data class FinanceUiState(
     val budgetProgresses: List<BudgetProgress> = emptyList(),
     val currencySymbol: String = "C$",
     val favoriteCurrencies: List<CurrencyItem> = WorldCurrencies.DEFAULT_3,
-    val activeCurrencyIndex: Int = 1, // Default 1 (NIO C$)
+    val activeCurrencyIndex: Int = 0, // Default 0 (NIO C$ - Moneda Principal)
     val exchangeRate2: Double = 36.6243, // 1 USD = 36.6243 C$
-    val exchangeRate3: Double = 0.92,    // 1 USD = 0.92 EUR
-    val activeConversionMultiplier: Double = 36.6243,
+    val exchangeRate3: Double = 39.809,  // 1 EUR = 39.809 C$
+    val activeConversionMultiplier: Double = 1.0,
     val userEmail: String = "jfranciscojfas@gmail.com",
     val userName: String = "Francisco J.",
     val isGoogleDriveConnected: Boolean = true,
@@ -108,7 +110,10 @@ data class FinanceUiState(
     val aiErrorMessage: String? = null,
     val backupJson: String? = null,
     val importMessage: String? = null,
-    val firebaseSyncStatus: FirebaseSyncStatus = FirebaseSyncStatus()
+    val firebaseSyncStatus: FirebaseSyncStatus = FirebaseSyncStatus(),
+    val monthlyDeficit: Double = 0.0,
+    val isBankruptcyAlert: Boolean = false,
+    val frozenExpensesSavings: Double = 0.0
 )
 
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
@@ -130,13 +135,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _favoriteCurrencies = MutableStateFlow<List<CurrencyItem>>(WorldCurrencies.DEFAULT_3)
     val favoriteCurrencies: StateFlow<List<CurrencyItem>> = _favoriteCurrencies.asStateFlow()
 
-    private val _activeCurrencyIndex = MutableStateFlow(1) // Default to Moneda 2 (NIO C$)
+    private val _activeCurrencyIndex = MutableStateFlow(0) // Default to 0 (NIO C$ Córdobas - Moneda Principal)
     val activeCurrencyIndex: StateFlow<Int> = _activeCurrencyIndex.asStateFlow()
 
     private val _exchangeRate2 = MutableStateFlow(36.6243) // 1 USD = 36.6243 NIO C$
     val exchangeRate2: StateFlow<Double> = _exchangeRate2.asStateFlow()
 
-    private val _exchangeRate3 = MutableStateFlow(0.92)    // 1 USD = 0.92 EUR
+    private val _exchangeRate3 = MutableStateFlow(39.809)  // 1 EUR = 39.809 NIO C$
     val exchangeRate3: StateFlow<Double> = _exchangeRate3.asStateFlow()
 
     private val _currencySymbol = MutableStateFlow("C$")
@@ -200,10 +205,14 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     ) { favs, idx, rate2, rate3 ->
         val safeIndex = idx.coerceIn(0, 2)
         val selectedItem = favs.getOrElse(safeIndex) { WorldCurrencies.DEFAULT_3[0] }
+        // Multiplicador para pasar de CÓRDOBAS (moneda base guardada) a la moneda de visualización:
+        // - Si visualiza en Córdobas (0): multiplier = 1.0 (exacto, sin redondeos ni fluctuación)
+        // - Si visualiza en Dólares (1): 1 USD = rate2 C$, por lo que C$ / rate2 -> multiplier = 1.0 / rate2
+        // - Si visualiza en Euros (2): 1 EUR = rate3 C$, por lo que C$ / rate3 -> multiplier = 1.0 / rate3
         val multiplier = when (safeIndex) {
             0 -> 1.0
-            1 -> rate2
-            2 -> rate3
+            1 -> if (rate2 > 0) 1.0 / rate2 else 1.0
+            2 -> if (rate3 > 0) 1.0 / rate3 else 1.0
             else -> 1.0
         }
         val symbol = selectedItem.symbol
@@ -216,6 +225,28 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             multiplier = multiplier,
             symbol = symbol
         )
+    }
+
+    /**
+     * Convierte cualquier monto ingresado a la moneda principal CÓRDOBAS (NIO C$).
+     * - Si se registra en Córdobas (C$): el monto se guarda exactamente sin modificación.
+     * - Si se registra en Dólares (USD): se calcula Córdobas = Dólares * Tasa (36.6243).
+     * El primer cálculo de Córdobas es el que manda y queda guardado como base inmutable en Room/Firestore.
+     */
+    fun convertToCordobas(amount: Double): Double {
+        val idx = _activeCurrencyIndex.value.coerceIn(0, 2)
+        return when (idx) {
+            0 -> amount // Córdobas C$ (Moneda principal): exacto, sin divisiones ni errores de redondeo
+            1 -> {
+                val r2 = _exchangeRate2.value
+                if (r2 > 0) amount * r2 else amount
+            }
+            2 -> {
+                val r3 = _exchangeRate3.value
+                if (r3 > 0) amount * r3 else amount
+            }
+            else -> amount
+        }
     }
 
     private fun isTimestampInPeriod(timestamp: Long, mode: String): Boolean {
@@ -383,6 +414,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             )
         }
 
+        val deficit = (activeExpense + periodPendingActiveTotal) - activeIncome
+        val isBankruptcy = deficit > 0.01 || (activeExpense > activeIncome && activeIncome > 0)
+
         FinanceUiState(
             transactions = convertedTxs,
             rawTransactions = txs,
@@ -417,7 +451,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             aiErrorMessage = aiState.aiErrorMessage,
             backupJson = aiState.backupJson,
             importMessage = aiState.importMessage,
-            firebaseSyncStatus = fbSync
+            firebaseSyncStatus = fbSync,
+            monthlyDeficit = if (deficit > 0) deficit else 0.0,
+            isBankruptcyAlert = isBankruptcy
         )
     }.stateIn(
         scope = viewModelScope,
@@ -429,6 +465,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         repository.bindFirebaseManager(firebaseManager)
         viewModelScope.launch {
             repository.seedInitialDataIfEmpty(getApplication())
+            checkUpcomingPaymentAlerts()
         }
     }
 
@@ -459,12 +496,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         customRate2: Double? = null,
         customRate3: Double? = null
     ) {
-        _favoriteCurrencies.value = listOf(c1, c2, c3)
-        _exchangeRate2.value = customRate2 ?: c2.defaultRateToUsd
-        _exchangeRate3.value = customRate3 ?: c3.defaultRateToUsd
+        val baseCordoba = if (c1.code == "NIO") c1 else WorldCurrencies.DEFAULT_3[0]
+        _favoriteCurrencies.value = listOf(baseCordoba, c2, c3)
+        _exchangeRate2.value = customRate2 ?: c2.defaultRateToNio
+        _exchangeRate3.value = customRate3 ?: c3.defaultRateToNio
         
         // Refresh symbol according to current index
-        val symbol = listOf(c1, c2, c3).getOrNull(_activeCurrencyIndex.value)?.symbol ?: c1.symbol
+        val symbol = listOf(baseCordoba, c2, c3).getOrNull(_activeCurrencyIndex.value)?.symbol ?: baseCordoba.symbol
         _currencySymbol.value = symbol
     }
 
@@ -579,10 +617,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         _csvExportData.value = null
     }
 
-    fun addTransaction(title: String, amount: Double, category: String, type: String, note: String = "", isAi: Boolean = false, timestamp: Long = System.currentTimeMillis()) {
+    fun addTransaction(
+        title: String,
+        amount: Double,
+        category: String,
+        type: String,
+        note: String = "",
+        isAi: Boolean = false,
+        timestamp: Long = System.currentTimeMillis(),
+        attachmentUri: String? = null,
+        dueDate: Long? = null,
+        schedulePaymentReminder: Boolean = false
+    ) {
         viewModelScope.launch {
-            val mult = uiState.value.activeConversionMultiplier
-            val baseAmount = if (mult > 0) amount / mult else amount
+            val baseAmount = convertToCordobas(amount)
             val newTx = TransactionEntity(
                 title = title,
                 amount = baseAmount,
@@ -590,9 +638,31 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 type = type,
                 note = note,
                 isAiCategorized = isAi,
-                timestamp = timestamp
+                timestamp = timestamp,
+                attachmentUri = attachmentUri,
+                dueDate = dueDate,
+                hasReminderScheduled = schedulePaymentReminder
             )
             repository.addTransaction(newTx)
+
+            // If user requested or attachment has detected due date, calendarize and schedule reminders 2 days and 1 day before
+            if (schedulePaymentReminder && dueDate != null && dueDate > System.currentTimeMillis()) {
+                val scheduled = ScheduledExpenseEntity(
+                    title = title,
+                    amount = baseAmount,
+                    category = category,
+                    dueDate = dueDate,
+                    isPaid = false,
+                    notifyReminder = true,
+                    attachmentUri = attachmentUri,
+                    note = note
+                )
+                val id = repository.addScheduledExpense(scheduled)
+                val scheduledWithId = scheduled.copy(id = id)
+                PaymentAlarmScheduler.schedulePaymentReminders(getApplication(), scheduledWithId, uiState.value.currencySymbol)
+                _importMessage.value = "⏰ Pago calendarizado. Te notificaremos 2 días y 1 día antes del vencimiento."
+            }
+
             checkBudgetAlertsAndNotify(category, baseAmount, type)
         }
     }
@@ -606,10 +676,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveBudgetLimit(category: String, limitAmount: Double, thresholdPercent: Int = 80) {
         viewModelScope.launch {
+            val baseAmount = convertToCordobas(limitAmount)
             repository.saveBudget(
                 BudgetEntity(
                     category = category,
-                    limitAmount = limitAmount,
+                    limitAmount = baseAmount,
                     alertThresholdPercent = thresholdPercent
                 )
             )
@@ -678,11 +749,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         amount: Double,
         category: String,
         dueDate: Long,
-        notifyReminder: Boolean
+        notifyReminder: Boolean,
+        attachmentUri: String? = null,
+        note: String = "",
+        isEmergencyPriority: Boolean = false
     ) {
         viewModelScope.launch {
-            val mult = uiState.value.activeConversionMultiplier
-            val baseAmount = if (mult > 0) amount / mult else amount
+            val baseAmount = convertToCordobas(amount)
 
             val entity = ScheduledExpenseEntity(
                 title = title,
@@ -690,24 +763,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = category,
                 dueDate = dueDate,
                 isPaid = false,
-                notifyReminder = notifyReminder
+                notifyReminder = notifyReminder,
+                attachmentUri = attachmentUri,
+                note = note,
+                isEmergencyPriority = isEmergencyPriority
             )
-            repository.addScheduledExpense(entity)
+            val id = repository.addScheduledExpense(entity)
+            val entityWithId = entity.copy(id = id)
 
             if (notifyReminder) {
+                PaymentAlarmScheduler.schedulePaymentReminders(getApplication(), entityWithId, uiState.value.currencySymbol)
                 val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                NotificationHelper.sendScheduledExpenseReminder(
-                    context = getApplication(),
-                    title = title,
-                    amountFormatted = "${uiState.value.currencySymbol}${String.format(Locale.US, "%.2f", amount)}",
-                    dueDateText = "el ${sdf.format(Date(dueDate))}"
-                )
+                _importMessage.value = "⏰ Recordatorio activado: Notificaciones automáticas 2 días y 1 día antes del vencimiento (${sdf.format(Date(dueDate))})."
             }
         }
     }
 
     fun markScheduledExpenseAsPaid(expense: ScheduledExpenseEntity) {
         viewModelScope.launch {
+            PaymentAlarmScheduler.cancelPaymentReminders(getApplication(), expense.id)
             repository.updateScheduledExpense(expense.copy(isPaid = true))
 
             // Create a real transaction for this paid scheduled expense
@@ -717,7 +791,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = expense.category,
                 type = "EXPENSE",
                 timestamp = System.currentTimeMillis(),
-                note = "Gasto programado registrado como pagado"
+                note = "Gasto programado registrado como pagado" + if (expense.note.isNotBlank()) " (${expense.note})" else "",
+                attachmentUri = expense.attachmentUri
             )
             repository.addTransaction(newTx)
 
@@ -733,7 +808,65 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteScheduledExpense(expense: ScheduledExpenseEntity) {
         viewModelScope.launch {
+            PaymentAlarmScheduler.cancelPaymentReminders(getApplication(), expense.id)
             repository.deleteScheduledExpense(expense)
+        }
+    }
+
+    fun clearAllDataToZero() {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            repository.clearAllDatabaseAndCloud(getApplication())
+            _importMessage.value = "🧹 ¡Base de datos reiniciada a cero! Listo para comenzar ordenado y sin deudas atrasadas."
+            _isAiLoading.value = false
+        }
+    }
+
+    fun scanReceiptWithDueDate(uri: android.net.Uri, onResult: (ReceiptScanResult) -> Unit) {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            _aiErrorMessage.value = null
+            val result = GeminiCategorizer.scanReceiptImageWithDueDate(getApplication(), uri)
+            _isAiLoading.value = false
+            result.onSuccess {
+                onResult(it)
+            }.onFailure {
+                _aiErrorMessage.value = "Error al escanear comprobante: ${it.message}"
+            }
+        }
+    }
+
+    fun checkUpcomingPaymentAlerts() {
+        viewModelScope.launch {
+            val scheduled = uiState.value.scheduledExpenses.filter { !it.isPaid && it.notifyReminder }
+            val now = System.currentTimeMillis()
+            val dayMs = 86400000L
+            val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+
+            scheduled.forEach { expense ->
+                val diffMs = expense.dueDate - now
+                val daysRemaining = (diffMs / dayMs).toInt()
+                val dueDateFormatted = sdf.format(Date(expense.dueDate))
+                val amountFormatted = "${uiState.value.currencySymbol}${String.format(Locale.US, "%.2f", expense.amount)}"
+
+                if (diffMs > 0 && daysRemaining == 2) {
+                    NotificationHelper.sendPaymentDueReminder(
+                        getApplication(),
+                        expense.title,
+                        amountFormatted,
+                        2,
+                        dueDateFormatted
+                    )
+                } else if (diffMs > 0 && daysRemaining == 1) {
+                    NotificationHelper.sendPaymentDueReminder(
+                        getApplication(),
+                        expense.title,
+                        amountFormatted,
+                        1,
+                        dueDateFormatted
+                    )
+                }
+            }
         }
     }
 
@@ -950,15 +1083,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun addExtraordinaryFund(title: String, totalAmount: Double, note: String) {
         viewModelScope.launch {
+            val baseAmount = convertToCordobas(totalAmount)
             val fund = com.example.data.entity.ExtraordinaryFundEntity(
                 title = title,
-                totalAmount = totalAmount,
-                currencySymbol = uiState.value.currencySymbol,
+                totalAmount = baseAmount,
+                currencySymbol = "C$",
                 createdAt = System.currentTimeMillis(),
                 note = note
             )
             repository.addExtraordinaryFund(fund)
-            _importMessage.value = "⭐ Presupuesto de Ingreso Extraordinario registrado."
+            _importMessage.value = "⭐ Presupuesto de Ingreso Extraordinario registrado (Base C$)."
         }
     }
 
@@ -980,11 +1114,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val fund = uiState.value.extraordinaryFunds.find { it.id == fundId } ?: return@launch
             val jsonArray = try { JSONArray(fund.allocationsJson) } catch (e: Exception) { JSONArray() }
+            val baseAmount = convertToCordobas(amount)
 
             val newObj = JSONObject().apply {
                 put("id", java.util.UUID.randomUUID().toString())
                 put("title", allocationTitle)
-                put("amount", amount)
+                put("amount", baseAmount)
                 put("category", category)
                 put("note", note)
                 put("timestamp", System.currentTimeMillis())

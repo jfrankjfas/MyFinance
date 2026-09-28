@@ -11,5 +11,8 @@ data class ScheduledExpenseEntity(
     val category: String,
     val dueDate: Long, // timestamp in milliseconds
     val isPaid: Boolean = false,
-    val notifyReminder: Boolean = true
+    val notifyReminder: Boolean = true,
+    val attachmentUri: String? = null,
+    val note: String = "",
+    val isEmergencyPriority: Boolean = false // Gasto vital / prioritario
 )

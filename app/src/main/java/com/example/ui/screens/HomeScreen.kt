@@ -56,6 +56,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.clickable
+import coil.compose.AsyncImage
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CrisisAlert
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Warning
+import com.example.ui.components.FinancialRescueModal
+import com.example.ui.theme.WarningAmber
 import com.example.data.entity.TransactionEntity
 import com.example.ui.FinanceUiState
 import com.example.ui.components.BudgetAlertBanner
@@ -79,9 +89,13 @@ fun HomeScreen(
     onCurrencySelected: (String) -> Unit,
     onCurrencyIndexSelected: (Int) -> Unit = {},
     onProfileClick: () -> Unit = {},
+    onGoToScheduledPayments: () -> Unit = {},
+    onResetToZero: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var showRescueModal by remember { mutableStateOf(false) }
+    var viewerImageUri by remember { mutableStateOf<String?>(null) }
 
     val generalProgress = uiState.budgetProgresses.find { it.category == "Presupuesto Total Mensual" }
 
@@ -157,6 +171,77 @@ fun HomeScreen(
                 }
             }
 
+            // Financial Bankruptcy / Crisis Rescue Banner
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showRescueModal = true },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (uiState.isBankruptcyAlert) ExpenseRed.copy(alpha = 0.09f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                    ),
+                    border = BorderStroke(1.5.dp, if (uiState.isBankruptcyAlert) ExpenseRed.copy(alpha = 0.45f) else PrimaryEmerald.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(if (uiState.isBankruptcyAlert) ExpenseRed.copy(alpha = 0.18f) else PrimaryEmerald.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CrisisAlert,
+                                contentDescription = null,
+                                tint = if (uiState.isBankruptcyAlert) ExpenseRed else PrimaryEmerald,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (uiState.isBankruptcyAlert) "🚨 SOS FINANCIERO: ESTADO EN QUIEBRA" else "🛡️ PLAN DE RESCATE FINANCIERO",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 12.sp,
+                                    color = if (uiState.isBankruptcyAlert) ExpenseRed else PrimaryEmerald
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (uiState.monthlyDeficit > 0) {
+                                    "Déficit: -${uiState.currencySymbol}${String.format(Locale.US, "%.2f", uiState.monthlyDeficit)}. Toca para ver el plan de triaje y rescate."
+                                } else {
+                                    "Organiza pagos prioritarios, evita intereses y recorta fugas."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (uiState.isBankruptcyAlert) ExpenseRed else PrimaryEmerald
+                        ) {
+                            Text(
+                                text = "Abrir Plan",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
 
             // Main Balance Card
             item {
