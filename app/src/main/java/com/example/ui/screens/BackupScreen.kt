@@ -98,11 +98,7 @@ fun BackupScreen(
     val coroutineScope = rememberCoroutineScope()
     var importJsonText by remember { mutableStateOf("") }
     var showImportField by remember { mutableStateOf(false) }
-    var showLoginDialog by remember { mutableStateOf(false) }
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
-
-    var loginEmailInput by remember { mutableStateOf("") }
-    var loginNameInput by remember { mutableStateOf("") }
 
     // Currencies customization
     val fav1 = uiState.favoriteCurrencies.getOrElse(0) { WorldCurrencies.DEFAULT_3[0] }
@@ -229,8 +225,10 @@ fun BackupScreen(
                                                 onLogin(userData.email, userData.displayName)
                                                 Toast.makeText(context, "¡Sesión iniciada con Google!", Toast.LENGTH_SHORT).show()
                                             },
-                                            onError = {
-                                                showLoginDialog = true
+                                            onError = { errorMsg ->
+                                                if (!errorMsg.contains("cancelado", ignoreCase = true) && !errorMsg.contains("cancellation", ignoreCase = true)) {
+                                                    Toast.makeText(context, "⚠️ Error en Google Identity Services: $errorMsg", Toast.LENGTH_LONG).show()
+                                                }
                                             }
                                         )
                                     }
@@ -846,54 +844,6 @@ fun BackupScreen(
         }
 
         item { Spacer(modifier = Modifier.height(30.dp)) }
-    }
-
-    if (showLoginDialog) {
-        AlertDialog(
-            onDismissRequest = { showLoginDialog = false },
-            title = { Text("Conectar Cuenta de Google / Gmail") },
-            text = {
-                Column {
-                    Text("Ingresa los datos para vincular tu cuenta con Finanzas Claras:")
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = loginNameInput,
-                        onValueChange = { loginNameInput = it },
-                        label = { Text("Nombre Completo") },
-                        placeholder = { Text("Ej: Francisco J.") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = loginEmailInput,
-                        onValueChange = { loginEmailInput = it },
-                        label = { Text("Correo Gmail") },
-                        placeholder = { Text("ejemplo@gmail.com") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val email = if (loginEmailInput.isNotBlank()) loginEmailInput.trim() else "usuario@gmail.com"
-                        val name = if (loginNameInput.isNotBlank()) loginNameInput.trim() else "Usuario Gmail"
-                        onLogin(email, name)
-                        showLoginDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
-                ) {
-                    Text("Iniciar Sesión")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLoginDialog = false }) {
-                    Text("Cancelar")
-                }
-            }
-        )
     }
 
     if (showSignOutConfirmDialog) {

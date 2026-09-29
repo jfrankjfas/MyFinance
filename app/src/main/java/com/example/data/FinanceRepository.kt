@@ -177,10 +177,14 @@ class FinanceRepository(
         archivedPeriodDao.deleteAll()
     }
 
-    suspend fun fetchAndRestoreAllFromCloud(email: String): Int {
+    suspend fun fetchAndRestoreAllFromCloud(email: String, onPinRestored: ((String) -> Unit)? = null): Int {
         val manager = firebaseManager ?: return 0
         val snapshot = manager.fetchUserDataFromCloud(email)
         clearLocalDataOnly()
+
+        if (!snapshot.userPin.isNullOrBlank()) {
+            onPinRestored?.invoke(snapshot.userPin)
+        }
 
         if (snapshot.transactions.isNotEmpty()) {
             transactionDao.insertAll(snapshot.transactions)
@@ -201,6 +205,14 @@ class FinanceRepository(
         return snapshot.transactions.size + snapshot.budgets.size +
                 snapshot.scheduledExpenses.size + snapshot.extraordinaryFunds.size +
                 snapshot.archivedPeriods.size
+    }
+
+    fun saveUserPinToCloud(email: String, pin: String) {
+        firebaseManager?.saveUserPin(email, pin)
+    }
+
+    suspend fun fetchUserPinFromCloud(email: String): String? {
+        return firebaseManager?.fetchUserPin(email)
     }
 
     suspend fun clearAllData() {

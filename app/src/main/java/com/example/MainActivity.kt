@@ -1,31 +1,50 @@
 package com.example
 
+import android.app.Activity
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -33,6 +52,8 @@ import com.example.security.AppSecurityManager
 import com.example.ui.FinanceViewModel
 import com.example.ui.components.AddTransactionDialog
 import com.example.ui.components.SecurityLockScreen
+import com.example.update.AppUpdateManager
+import kotlinx.coroutines.launch
 import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.BackupScreen
 import com.example.ui.screens.BudgetScreen
@@ -67,7 +88,17 @@ class MainActivity : FragmentActivity() {
                 else -> isSystemInDarkTheme()
             }
             FinanzasClaraTheme(darkTheme = isDark) {
-                if (isLocked) {
+                if (!uiState.isLoggedIn || uiState.userEmail.isBlank()) {
+                    com.example.ui.screens.LoginScreen(
+                        uiState = uiState,
+                        securityManager = securityManager,
+                        onLogin = { email, name, pin ->
+                            viewModel.loginUser(email, name, pin, securityManager) {
+                                securityManager.unlock()
+                            }
+                        }
+                    )
+                } else if (isLocked) {
                     SecurityLockScreen(
                         securityManager = securityManager,
                         onUnlocked = { securityManager.unlock() }
@@ -131,12 +162,15 @@ fun MainAppScreen(
             ProfileScreen(
                 uiState = uiState,
                 onLogout = { viewModel.logoutUser() },
-                onLogin = { email, name -> viewModel.loginUser(email, name) },
+                onLogin = { email, name -> viewModel.loginUser(email, name, securityManager = securityManager) },
                 onRestoreFromCloud = { viewModel.restoreFromCloud() },
                 onSetTheme = { viewModel.setAppTheme(it) },
                 onSetLanguage = { viewModel.setAppLanguage(it) },
                 onBack = { showProfileScreen = false },
                 securityManager = securityManager,
+                onChangePin = { newPin, onResult ->
+                    viewModel.updateUserSecurityPin(newPin, securityManager, onResult)
+                },
                 modifier = modifier
             )
         } else {
@@ -272,12 +306,22 @@ fun MainAppScreen(
                     viewModel.processAiInput(prompt, onResult)
                 },
                 onConfirmAddTransaction = { res ->
+                    val finalAmount = if (res.currency == "USD") {
+                        res.amount * uiState.exchangeRate2
+                    } else {
+                        res.amount
+                    }
+                    val finalNote = if (res.currency == "USD") {
+                        "[${res.amount} USD] ${res.note}"
+                    } else {
+                        res.note
+                    }
                     viewModel.addTransaction(
                         title = res.title,
-                        amount = res.amount,
+                        amount = finalAmount,
                         category = res.category,
                         type = res.type,
-                        note = res.note,
+                        note = finalNote,
                         isAi = true
                     )
                 },
@@ -286,6 +330,119 @@ fun MainAppScreen(
                 },
                 onScanReceiptWithDueDate = { uri, onResult ->
                     viewModel.scanReceiptWithDueDate(uri, onResult)
+                }
+            )
+        }
+
+        // Automatic In-App Update Prompt Dialog
+        val availableUpdate = uiState.availableUpdate
+        if (availableUpdate != null && availableUpdate.hasUpdate) {
+            val context = LocalContext.current
+            val activity = context as? Activity
+            val coroutineScope = rememberCoroutineScope()
+            val updateManager = remember { AppUpdateManager(context) }
+            var isDownloadingUpdate by remember { mutableStateOf(false) }
+            var downloadProgress by remember { mutableFloatStateOf(0f) }
+            var updateError by remember { mutableStateOf<String?>(null) }
+
+            AlertDialog(
+                onDismissRequest = {
+                    if (!isDownloadingUpdate) {
+                        viewModel.dismissUpdatePrompt()
+                    }
+                },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = "Actualización",
+                        tint = PrimaryEmerald,
+                        modifier = Modifier.size(36.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Actualización Detectada (v${availableUpdate.latestVersion})",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "Se ha detectado una nueva versión del sistema automáticamente. La actualización se descargará e instalará directamente en tu dispositivo sin necesidad de buscar o gestionar archivos externos.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        if (availableUpdate.releaseNotes.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Novedades:",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Text(
+                                text = availableUpdate.releaseNotes,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (isDownloadingUpdate) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                text = "Descargando e instalando... ${(downloadProgress * 100).toInt()}%",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PrimaryEmerald
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = PrimaryEmerald
+                            )
+                        }
+                        updateError?.let { err ->
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "⚠️ $err",
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (activity != null) {
+                                isDownloadingUpdate = true
+                                downloadProgress = 0f
+                                updateError = null
+                                coroutineScope.launch {
+                                    val res = updateManager.downloadAndInstallApk(
+                                        activity = activity,
+                                        apkUrl = availableUpdate.apkDownloadUrl,
+                                        onProgress = { downloadProgress = it }
+                                    )
+                                    isDownloadingUpdate = false
+                                    if (res.isFailure) {
+                                        updateError = res.exceptionOrNull()?.message
+                                    } else {
+                                        viewModel.dismissUpdatePrompt()
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isDownloadingUpdate,
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald)
+                    ) {
+                        Text(if (isDownloadingUpdate) "Actualizando..." else "Actualizar Ahora")
+                    }
+                },
+                dismissButton = {
+                    if (!isDownloadingUpdate) {
+                        TextButton(onClick = { viewModel.dismissUpdatePrompt() }) {
+                            Text("Más tarde")
+                        }
+                    }
                 }
             )
         }

@@ -249,8 +249,9 @@ fun AiCategorizerCard(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                val displaySymbol = if (res.currency == "USD") "$" else currencySymbol
                                 Text(
-                                    text = "$currencySymbol${String.format("%.2f", res.amount)}",
+                                    text = "$displaySymbol${String.format(java.util.Locale.US, "%.2f", res.amount)}",
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold,
                                     color = if (res.type == "INCOME") IncomeGreen else ExpenseRed

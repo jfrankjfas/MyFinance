@@ -39,7 +39,8 @@ data class CloudDataSnapshot(
     val budgets: List<BudgetEntity> = emptyList(),
     val scheduledExpenses: List<ScheduledExpenseEntity> = emptyList(),
     val extraordinaryFunds: List<ExtraordinaryFundEntity> = emptyList(),
-    val archivedPeriods: List<ArchivedPeriodEntity> = emptyList()
+    val archivedPeriods: List<ArchivedPeriodEntity> = emptyList(),
+    val userPin: String? = null
 )
 
 class FirebaseFinanceManager(
@@ -184,8 +185,21 @@ class FirebaseFinanceManager(
         val scList = mutableListOf<ScheduledExpenseEntity>()
         val efList = mutableListOf<ExtraordinaryFundEntity>()
         val apList = mutableListOf<ArchivedPeriodEntity>()
+        var cloudUserPin: String? = null
 
         try {
+            // 0. Fetch root document to retrieve security PIN (pinuser)
+            try {
+                val rootSnap = userDoc.get().await()
+                cloudUserPin = rootSnap.getString("pinuser") ?: rootSnap.getString("securityPin")
+                if (cloudUserPin.isNullOrBlank()) {
+                    val directPinDoc = db.collection("pinuser").document(cleanEmail).get().await()
+                    cloudUserPin = directPinDoc.getString("pinuser") ?: directPinDoc.getString("pin") ?: directPinDoc.getString("securityPin")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching user root pin doc: ${e.message}")
+            }
+
             // 1. Transactions
             val txSnap = userDoc.collection("transactions").get().await()
             for (doc in txSnap.documents) {
@@ -360,8 +374,71 @@ class FirebaseFinanceManager(
             budgets = bgList,
             scheduledExpenses = scList,
             extraordinaryFunds = efList,
-            archivedPeriods = apList
+            archivedPeriods = apList,
+            userPin = cloudUserPin
         )
+    }
+
+    /**
+     * Guarda el PIN de seguridad vinculado a la cuenta Gmail del usuario en Firebase Firestore.
+     * Se persiste tanto en el documento del usuario en 'finanzas_users' como en la colección dedicada 'pinuser'.
+     */
+    fun saveUserPin(email: String, pin: String) {
+        if (email.isBlank() || pin.isBlank()) return
+        val db = firestore ?: return
+        val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+        val userId = "acc_$cleanEmail"
+
+        val pinData = mapOf(
+            "pinuser" to pin,
+            "securityPin" to pin,
+            "email" to email.trim().lowercase(),
+            "updatedAt" to System.currentTimeMillis()
+        )
+
+        // 1. Guardar en documento del usuario
+        db.collection("finanzas_users").document(userId)
+            .set(pinData, SetOptions.merge())
+            .addOnSuccessListener {
+                Log.d(TAG, "PIN guardado exitosamente en finanzas_users/$userId")
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Error guardando PIN en finanzas_users: ${e.message}")
+            }
+
+        // 2. Guardar en colección 'pinuser' explícita
+        db.collection("pinuser").document(cleanEmail)
+            .set(pinData, SetOptions.merge())
+            .addOnSuccessListener {
+                Log.d(TAG, "PIN guardado exitosamente en colección pinuser/$cleanEmail")
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Error guardando PIN en colección pinuser: ${e.message}")
+            }
+    }
+
+    /**
+     * Recupera el PIN de seguridad almacenado en la nube para la cuenta Gmail del usuario.
+     */
+    suspend fun fetchUserPin(email: String): String? = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val db = firestore ?: return@withContext null
+        if (email.isBlank()) return@withContext null
+        val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+        val userId = "acc_$cleanEmail"
+
+        try {
+            // Intentar documento de usuario
+            val userSnap = db.collection("finanzas_users").document(userId).get().await()
+            val pin = userSnap.getString("pinuser") ?: userSnap.getString("securityPin")
+            if (!pin.isNullOrBlank()) return@withContext pin
+
+            // Intentar colección 'pinuser'
+            val pinSnap = db.collection("pinuser").document(cleanEmail).get().await()
+            return@withContext pinSnap.getString("pinuser") ?: pinSnap.getString("pin") ?: pinSnap.getString("securityPin")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error obteniendo PIN de la nube: ${e.message}")
+            null
+        }
     }
 
     private fun setupRealtimeListeners() {

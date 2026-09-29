@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 import com.example.data.model.CurrencyItem
@@ -60,10 +61,11 @@ data class CurrencyConfig(
 )
 
 data class UserSettingsState(
-    val userEmail: String = "jfranciscojfas@gmail.com",
-    val userName: String = "Francisco J.",
-    val isGoogleDriveConnected: Boolean = true,
-    val lastDriveSync: String? = "Hoy, 02:00 AM",
+    val userEmail: String = "",
+    val userName: String = "",
+    val isGoogleDriveConnected: Boolean = false,
+    val isLoggedIn: Boolean = false,
+    val lastDriveSync: String? = null,
     val csvExportData: String? = null,
     val favoriteCurrencies: List<CurrencyItem> = WorldCurrencies.DEFAULT_3,
     val appTheme: String = "SYSTEM",
@@ -74,7 +76,8 @@ data class AiState(
     val isAiLoading: Boolean = false,
     val aiErrorMessage: String? = null,
     val backupJson: String? = null,
-    val importMessage: String? = null
+    val importMessage: String? = null,
+    val availableUpdate: com.example.update.UpdateInfo? = null
 )
 
 data class FinanceUiState(
@@ -100,10 +103,11 @@ data class FinanceUiState(
     val exchangeRate2: Double = 36.6243, // 1 USD = 36.6243 C$
     val exchangeRate3: Double = 39.809,  // 1 EUR = 39.809 C$
     val activeConversionMultiplier: Double = 1.0,
-    val userEmail: String = "jfranciscojfas@gmail.com",
-    val userName: String = "Francisco J.",
-    val isGoogleDriveConnected: Boolean = true,
-    val lastDriveSync: String? = "Hoy, 02:00 AM",
+    val userEmail: String = "",
+    val userName: String = "",
+    val isGoogleDriveConnected: Boolean = false,
+    val isLoggedIn: Boolean = false,
+    val lastDriveSync: String? = null,
     val csvExportData: String? = null,
     val appTheme: String = "SYSTEM",
     val appLanguage: String = "ES",
@@ -114,7 +118,8 @@ data class FinanceUiState(
     val firebaseSyncStatus: FirebaseSyncStatus = FirebaseSyncStatus(),
     val monthlyDeficit: Double = 0.0,
     val isBankruptcyAlert: Boolean = false,
-    val frozenExpensesSavings: Double = 0.0
+    val frozenExpensesSavings: Double = 0.0,
+    val availableUpdate: com.example.update.UpdateInfo? = null
 )
 
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
@@ -149,9 +154,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val currencySymbol: StateFlow<String> = _currencySymbol.asStateFlow()
 
     private val appPrefs = application.getSharedPreferences("finanzas_clara_prefs", android.content.Context.MODE_PRIVATE)
-    private val initialIsLoggedIn = appPrefs.getBoolean("is_logged_in", true)
-    private val initialEmail = if (initialIsLoggedIn) appPrefs.getString("saved_email", "jfranciscojfas@gmail.com") ?: "jfranciscojfas@gmail.com" else ""
-    private val initialName = if (initialIsLoggedIn) appPrefs.getString("saved_name", "Francisco J.") ?: "Francisco J." else "Invitado"
+    private val initialIsLoggedIn = appPrefs.getBoolean("is_logged_in", false)
+    private val initialEmail = if (initialIsLoggedIn) appPrefs.getString("saved_email", "") ?: "" else ""
+    private val initialName = if (initialIsLoggedIn) appPrefs.getString("saved_name", "") ?: "" else ""
 
     private val _userEmail = MutableStateFlow(initialEmail)
     private val _userName = MutableStateFlow(initialName)
@@ -173,6 +178,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _importMessage = MutableStateFlow<String?>(null)
     val importMessage: StateFlow<String?> = _importMessage.asStateFlow()
 
+    private val _availableUpdate = MutableStateFlow<com.example.update.UpdateInfo?>(null)
+    val availableUpdate: StateFlow<com.example.update.UpdateInfo?> = _availableUpdate.asStateFlow()
+
     private val _userSettingsState = combine(
         _userEmail,
         _userName,
@@ -186,6 +194,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             userEmail = args[0] as String,
             userName = args[1] as String,
             isGoogleDriveConnected = args[2] as Boolean,
+            isLoggedIn = (args[2] as Boolean) && (args[0] as String).isNotBlank(),
             lastDriveSync = args[3] as? String,
             csvExportData = args[4] as? String,
             favoriteCurrencies = _favoriteCurrencies.value,
@@ -198,9 +207,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         _isAiLoading,
         _aiErrorMessage,
         _backupJson,
-        _importMessage
-    ) { loading, err, backup, impMsg ->
-        AiState(loading, err, backup, impMsg)
+        _importMessage,
+        _availableUpdate
+    ) { loading, err, backup, impMsg, updateInfo ->
+        AiState(loading, err, backup, impMsg, updateInfo)
     }
 
     private val _currencyConfigState = combine(
@@ -449,6 +459,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             userEmail = settings.userEmail,
             userName = settings.userName,
             isGoogleDriveConnected = settings.isGoogleDriveConnected,
+            isLoggedIn = settings.isLoggedIn,
             lastDriveSync = settings.lastDriveSync,
             csvExportData = settings.csvExportData,
             appTheme = settings.appTheme,
@@ -459,7 +470,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             importMessage = aiState.importMessage,
             firebaseSyncStatus = fbSync,
             monthlyDeficit = if (deficit > 0) deficit else 0.0,
-            isBankruptcyAlert = isBankruptcy
+            isBankruptcyAlert = isBankruptcy,
+            availableUpdate = aiState.availableUpdate
         )
     }.stateIn(
         scope = viewModelScope,
@@ -484,6 +496,29 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             }
             checkUpcomingPaymentAlerts()
         }
+        // Auto-check for app updates silently in background on launch
+        checkForUpdatesSilently()
+    }
+
+    fun checkForUpdatesSilently() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val updateMgr = com.example.update.AppUpdateManager(getApplication())
+                val res = updateMgr.checkForUpdates()
+                if (res.isSuccess) {
+                    val info = res.getOrNull()
+                    if (info != null && info.hasUpdate) {
+                        _availableUpdate.value = info
+                    }
+                }
+            } catch (e: Exception) {
+                // Background check fails silently without interrupting user
+            }
+        }
+    }
+
+    fun dismissUpdatePrompt() {
+        _availableUpdate.value = null
     }
 
     fun syncToFirebase() {
@@ -581,8 +616,14 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun loginUser(email: String, name: String) {
-        val cleanEmail = email.trim().lowercase()
+    fun loginUser(
+        email: String,
+        name: String,
+        securityPin: String? = null,
+        securityManager: com.example.security.AppSecurityManager? = null,
+        onSuccess: (() -> Unit)? = null
+    ) {
+        val cleanEmail = email.trim().lowercase(Locale.ROOT)
         val displayName = if (name.isBlank()) {
             cleanEmail.substringBefore("@").replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
         } else {
@@ -607,12 +648,24 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
             _lastDriveSync.value = "Conectado ahora (${sdf.format(Date())})"
 
-            // 1. Vincular cuenta a Firebase Firestore para cualquier usuario Gmail
+            // 1. Vincular cuenta a Firebase Firestore
             firebaseManager.updateUserAccount(cleanEmail)
 
-            // 2. Mandar a traer TODO lo almacenado y vinculado a esta cuenta Gmail
+            // 2. Mandar a traer registros y PIN desde la nube
             _importMessage.value = "Descargando todos tus registros desde la cuenta Gmail..."
-            val count = repository.fetchAndRestoreAllFromCloud(cleanEmail)
+            var cloudPinFound: String? = null
+            val count = repository.fetchAndRestoreAllFromCloud(cleanEmail) { cloudPin ->
+                cloudPinFound = cloudPin
+                securityManager?.setPinFromCloud(cloudPin)
+            }
+
+            // Si el usuario suministró un PIN explícito al iniciar sesión, se graba en Firebase (pinuser)
+            if (!securityPin.isNullOrBlank()) {
+                securityManager?.updatePin(securityPin)
+                repository.saveUserPinToCloud(cleanEmail, securityPin)
+            } else if (!cloudPinFound.isNullOrBlank()) {
+                securityManager?.setPinFromCloud(cloudPinFound!!)
+            }
 
             _isAiLoading.value = false
             if (count > 0) {
@@ -620,6 +673,27 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 _importMessage.value = "✅ ¡Bienvenido, $displayName! Cuenta $cleanEmail vinculada. Registros sincronizados en tiempo real."
             }
+            onSuccess?.invoke()
+        }
+    }
+
+    fun updateUserSecurityPin(
+        newPin: String,
+        securityManager: com.example.security.AppSecurityManager?,
+        onComplete: (Boolean) -> Unit
+    ) {
+        if (newPin.length !in 4..8) {
+            onComplete(false)
+            return
+        }
+        val email = _userEmail.value
+        val updated = securityManager?.updatePin(newPin) ?: false
+        if (updated && email.isNotBlank()) {
+            repository.saveUserPinToCloud(email, newPin)
+            _importMessage.value = "🔒 PIN de seguridad actualizado y guardado en Firebase (pinuser)"
+            onComplete(true)
+        } else {
+            onComplete(updated)
         }
     }
 

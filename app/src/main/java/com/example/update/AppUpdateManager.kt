@@ -51,11 +51,50 @@ class AppUpdateManager(private val context: Context) {
         prefs.edit().putString(KEY_GITHUB_REPO, clean).apply()
     }
 
-    suspend fun checkForUpdates(currentVersionName: String = "1.0"): Result<UpdateInfo> = withContext(Dispatchers.IO) {
+    fun getInstalledVersionName(): String {
+        return try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "1.0"
+        } catch (e: Exception) {
+            "1.0"
+        }
+    }
+
+    suspend fun checkForUpdates(currentVersionName: String = getInstalledVersionName()): Result<UpdateInfo> = withContext(Dispatchers.IO) {
+        val currentVer = if (currentVersionName.isBlank()) getInstalledVersionName() else currentVersionName
+
+        // 1. Try checking Firestore app_config/version first (Fast, cloud real-time update)
+        try {
+            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            val task = firestore.collection("app_config").document("version").get()
+            val snap = com.google.android.gms.tasks.Tasks.await(task, 4, TimeUnit.SECONDS)
+            if (snap != null && snap.exists()) {
+                val ver = snap.getString("latestVersion") ?: ""
+                val notes = snap.getString("releaseNotes") ?: "Nuevas mejoras de rendimiento y seguridad."
+                val apkUrl = snap.getString("apkDownloadUrl") ?: ""
+                val date = snap.getString("releaseDate") ?: ""
+                if (ver.isNotBlank()) {
+                    val hasUpdate = isNewerVersion(currentVer, ver)
+                    return@withContext Result.success(
+                        UpdateInfo(
+                            hasUpdate = hasUpdate,
+                            latestVersion = ver,
+                            releaseNotes = notes,
+                            apkDownloadUrl = apkUrl.ifBlank { "https://github.com/${getRepositoryName()}/releases/latest/download/app-debug.apk" },
+                            releaseDate = date
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Firestore update check skipped/not configured: ${e.message}")
+        }
+
+        // 2. Fallback to GitHub Releases API
         try {
             val repo = getRepositoryName()
             val url = "https://api.github.com/repos/$repo/releases/latest"
-            Log.d(TAG, "Checking update at: $url")
+            Log.d(TAG, "Checking update at GitHub: $url")
 
             val request = Request.Builder()
                 .url(url)
@@ -66,9 +105,17 @@ class AppUpdateManager(private val context: Context) {
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
                 if (response.code == 404) {
-                    return@withContext Result.failure(Exception("Aún no se ha publicado ningún Release en GitHub ($repo). Realiza un push con el workflow activo."))
+                    return@withContext Result.success(
+                        UpdateInfo(
+                            hasUpdate = false,
+                            latestVersion = currentVer,
+                            releaseNotes = "No hay actualizaciones publicadas en GitHub por el momento.",
+                            apkDownloadUrl = "",
+                            releaseDate = ""
+                        )
+                    )
                 }
-                return@withContext Result.failure(Exception("Error al consultar GitHub: Código ${response.code}"))
+                return@withContext Result.failure(Exception("Servidor de actualizaciones respondió: Código ${response.code}"))
             }
 
             val bodyString = response.body?.string() ?: return@withContext Result.failure(Exception("Respuesta vacía de GitHub"))
@@ -98,12 +145,12 @@ class AppUpdateManager(private val context: Context) {
                 downloadUrl = "https://github.com/$repo/releases/latest/download/app-debug.apk"
             }
 
-            val hasUpdate = isNewerVersion(currentVersionName, tagName)
+            val hasUpdate = isNewerVersion(currentVer, tagName)
 
             Result.success(
                 UpdateInfo(
                     hasUpdate = hasUpdate,
-                    latestVersion = if (tagName.isNotBlank()) tagName else "1.0",
+                    latestVersion = if (tagName.isNotBlank()) tagName else currentVer,
                     releaseNotes = releaseNotes,
                     apkDownloadUrl = downloadUrl,
                     releaseDate = publishedAt

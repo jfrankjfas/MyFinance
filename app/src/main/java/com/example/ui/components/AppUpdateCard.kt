@@ -71,6 +71,10 @@ fun AppUpdateCard(
     val coroutineScope = rememberCoroutineScope()
     val updateManager = remember { AppUpdateManager(context) }
 
+    val currentVer = remember {
+        if (currentVersion.isNotBlank() && currentVersion != "1.0") currentVersion else updateManager.getInstalledVersionName()
+    }
+
     var isChecking by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isUpToDate by remember { mutableStateOf(false) }
@@ -118,7 +122,7 @@ fun AppUpdateCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Versión instalada: v$currentVersion",
+                        text = "Versión instalada: v$currentVer • Detección automática",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -174,7 +178,7 @@ fun AppUpdateCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Recibe e instala mejoras directamente desde tu repositorio de GitHub sin tener que descargar archivos manualmente.",
+                text = "La aplicación detecta y comprueba actualizaciones de forma automática al iniciarse. Las nuevas versiones se instalan directamente sin requerir descargas manuales de archivos externos.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 16.sp
@@ -200,7 +204,7 @@ fun AppUpdateCard(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "✅ Tu app está actualizada a la última versión (v$currentVersion).",
+                            text = "✅ Tu app está en la versión más reciente (v$currentVer).",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = IncomeGreen
@@ -349,7 +353,7 @@ fun AppUpdateCard(
                     isUpToDate = false
                     updateInfo = null
                     coroutineScope.launch {
-                        val result = updateManager.checkForUpdates(currentVersion)
+                        val result = updateManager.checkForUpdates(currentVer)
                         isChecking = false
                         if (result.isSuccess) {
                             val info = result.getOrNull()
@@ -373,7 +377,7 @@ fun AppUpdateCard(
                         color = SleekPrimary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Comprobando en GitHub...", fontSize = 13.sp)
+                    Text("Comprobando actualizaciones...", fontSize = 13.sp)
                 } else {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -381,7 +385,7 @@ fun AppUpdateCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Buscar Actualizaciones Ahora", fontSize = 13.sp)
+                    Text("Comprobar Actualizaciones Ahora", fontSize = 13.sp)
                 }
             }
         }

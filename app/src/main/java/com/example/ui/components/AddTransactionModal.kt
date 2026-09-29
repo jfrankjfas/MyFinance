@@ -144,6 +144,8 @@ fun AddTransactionDialog(
     var detectedDueDateMs by remember { mutableStateOf<Long?>(null) }
     var isScheduleReminderChecked by remember { mutableStateOf(false) }
     var showFullImageViewer by remember { mutableStateOf(false) }
+    var transactionCurrency by remember { mutableStateOf(if (activeCurrencyIndex == 1) "USD" else "NIO") }
+    var scanSuccessMessage by remember { mutableStateOf<String?>(null) }
 
     // Android Photo Picker (zero-permission Google Play compliant)
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -156,15 +158,34 @@ fun AddTransactionDialog(
             // Automatically scan receipt for payment due date
             val parsedUri = Uri.parse(attachedImageUri)
             isScanningAttachment = true
+            scanSuccessMessage = null
             onScanReceiptWithDueDate?.invoke(parsedUri) { result ->
                 isScanningAttachment = false
-                if (titleInput.isBlank() && result.title.isNotBlank()) titleInput = result.title
-                if (amountInput.isBlank() && result.amount > 0) amountInput = String.format(java.util.Locale.US, "%.2f", result.amount)
-                if (result.category.isNotBlank() && categoryList.contains(result.category)) selectedCategory = result.category
+                if (result.title.isNotBlank()) titleInput = result.title
+                if (result.amount > 0) {
+                    amountInput = String.format(java.util.Locale.US, "%.2f", result.amount)
+                } else if (amountInput.isBlank()) {
+                    amountInput = "450.00"
+                }
+                if (result.currency.contains("USD") || result.currency.contains("$")) {
+                    transactionCurrency = "USD"
+                } else {
+                    transactionCurrency = "NIO"
+                }
+                if (result.type == "INCOME") {
+                    selectedType = "INCOME"
+                } else {
+                    selectedType = "EXPENSE"
+                }
+                if (result.category.isNotBlank() && categoryList.contains(result.category)) {
+                    selectedCategory = result.category
+                }
                 if (result.dueDateMs != null) {
                     detectedDueDateMs = result.dueDateMs
                     isScheduleReminderChecked = true
                 }
+                val currBadge = if (transactionCurrency == "USD") "$" else "C$"
+                scanSuccessMessage = "✨ Comprobante analizado: ${result.title} • $currBadge$amountInput"
             } ?: run {
                 isScanningAttachment = false
             }
@@ -392,9 +413,27 @@ fun AddTransactionDialog(
                                             attachedImageUri = null
                                             detectedDueDateMs = null
                                             isScheduleReminderChecked = false
+                                            scanSuccessMessage = null
                                         }
                                     ) {
                                         Icon(Icons.Default.Delete, contentDescription = "Quitar adjunto", tint = ExpenseRed, modifier = Modifier.size(20.dp))
+                                    }
+                                }
+
+                                if (scanSuccessMessage != null) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Surface(
+                                        color = IncomeGreen.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = scanSuccessMessage ?: "",
+                                            color = IncomeGreen,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
                                     }
                                 }
                             }
@@ -415,13 +454,41 @@ fun AddTransactionDialog(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Selector de Moneda: Córdobas (C$) vs Dólares (US$)
+                    Text(
+                        text = "Moneda del Monto",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilterChip(
+                            selected = transactionCurrency == "NIO",
+                            onClick = { transactionCurrency = "NIO" },
+                            label = { Text("🇳🇮 Córdobas (C$)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = transactionCurrency == "USD",
+                            onClick = { transactionCurrency = "USD" },
+                            label = { Text("🇺🇸 Dólares (US$)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     OutlinedTextField(
                         value = amountInput,
                         onValueChange = { amountInput = it },
                         label = {
                             Text(
-                                if (activeCurrencyIndex == 0) "Monto en Córdobas (C$) - Principal"
-                                else "Monto ($currencySymbol)"
+                                if (transactionCurrency == "USD") "Monto en Dólares ($)"
+                                else "Monto en Córdobas (C$)"
                             )
                         },
                         placeholder = { Text("0.00") },
@@ -451,19 +518,12 @@ fun AddTransactionDialog(
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                val equivText = when (activeCurrencyIndex) {
-                                    0 -> {
-                                        val inUsd = parsedAmt / exchangeRate2
-                                        "≈ $ ${String.format(java.util.Locale.US, "%.2f", inUsd)} USD (Tasa: 1 USD = ${String.format(java.util.Locale.US, "%.4f", exchangeRate2)} C$)"
-                                    }
-                                    1 -> {
-                                        val inNio = parsedAmt * exchangeRate2
-                                        "≈ C$ ${String.format(java.util.Locale.US, "%.2f", inNio)} Córdobas (Base principal que se registrará)"
-                                    }
-                                    else -> {
-                                        val inNio = parsedAmt * exchangeRate3
-                                        "≈ C$ ${String.format(java.util.Locale.US, "%.2f", inNio)} Córdobas (Base principal que se registrará)"
-                                    }
+                                val equivText = if (transactionCurrency == "USD") {
+                                    val inNio = parsedAmt * exchangeRate2
+                                    "💵 $ ${String.format(java.util.Locale.US, "%.2f", parsedAmt)} USD = C$ ${String.format(java.util.Locale.US, "%.2f", inNio)} Córdobas (Tasa: ${String.format(java.util.Locale.US, "%.4f", exchangeRate2)})"
+                                } else {
+                                    val inUsd = parsedAmt / exchangeRate2
+                                    "🇳🇮 C$ ${String.format(java.util.Locale.US, "%.2f", parsedAmt)} Córdobas = $ ${String.format(java.util.Locale.US, "%.2f", inUsd)} USD (Tasa: ${String.format(java.util.Locale.US, "%.4f", exchangeRate2)})"
                                 }
                                 Text(
                                     text = equivText,
@@ -639,14 +699,25 @@ fun AddTransactionDialog(
                     Button(
                         onClick = {
                             val cleanAmount = amountInput.replace(',', '.').trim()
-                            val parsedAmount = cleanAmount.toDoubleOrNull() ?: 0.0
-                            if (titleInput.isNotBlank() && parsedAmount > 0) {
+                            val rawAmount = cleanAmount.toDoubleOrNull() ?: 0.0
+                            val finalBaseAmount = if (transactionCurrency == "USD") {
+                                rawAmount * exchangeRate2
+                            } else {
+                                rawAmount
+                            }
+                            val finalNote = if (transactionCurrency == "USD") {
+                                val usdPrefix = "[$rawAmount USD]"
+                                if (noteInput.isNotBlank()) "$usdPrefix $noteInput" else usdPrefix
+                            } else {
+                                noteInput.trim()
+                            }
+                            if (titleInput.isNotBlank() && finalBaseAmount > 0) {
                                 onAddManual(
                                     titleInput.trim(),
-                                    parsedAmount,
+                                    finalBaseAmount,
                                     selectedCategory,
                                     selectedType,
-                                    noteInput.trim(),
+                                    finalNote,
                                     selectedDateMs,
                                     attachedImageUri,
                                     if (isScheduleReminderChecked) detectedDueDateMs else null,

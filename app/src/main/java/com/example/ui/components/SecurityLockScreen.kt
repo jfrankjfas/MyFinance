@@ -335,7 +335,29 @@ fun SecurityLockScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            TextButton(
+                onClick = {
+                    if (context is FragmentActivity && canUseBiometric) {
+                        securityManager.showBiometricPrompt(
+                            activity = context,
+                            onSuccess = { onUnlocked() },
+                            onError = { err -> errorMessage = err }
+                        )
+                    } else {
+                        errorMessage = "Tip: El PIN por defecto es 1234. Puedes cambiarlo en tu Perfil > Seguridad."
+                    }
+                }
+            ) {
+                Text(
+                    text = "🔑 ¿Olvidaste tu PIN o deseas cambiarlo?",
+                    fontSize = 13.sp,
+                    color = SleekPrimary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Subtitle note ensuring user data is safe
             Text(

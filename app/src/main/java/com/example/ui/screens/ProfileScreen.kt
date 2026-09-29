@@ -94,12 +94,12 @@ fun ProfileScreen(
     onSetLanguage: (String) -> Unit = {},
     onBack: () -> Unit = {},
     securityManager: AppSecurityManager? = null,
+    onChangePin: ((String, (Boolean) -> Unit) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
-    var showSignInDialog by remember { mutableStateOf(false) }
     var showChangePinDialog by remember { mutableStateOf(false) }
     var newPinInput by remember { mutableStateOf("") }
     var confirmPinInput by remember { mutableStateOf("") }
@@ -111,9 +111,6 @@ fun ProfileScreen(
     var isBiometricEnabled by remember {
         mutableStateOf(securityManager?.isBiometricEnabled() ?: true)
     }
-
-    var loginEmailInput by remember { mutableStateOf("") }
-    var loginNameInput by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = modifier
@@ -652,7 +649,9 @@ fun ProfileScreen(
                                                 Toast.makeText(context, "¡Bienvenido, ${userData.displayName}! Descargando datos...", Toast.LENGTH_SHORT).show()
                                             },
                                             onError = { errorMsg ->
-                                                showSignInDialog = true
+                                                if (!errorMsg.contains("cancelado", ignoreCase = true) && !errorMsg.contains("cancellation", ignoreCase = true)) {
+                                                    Toast.makeText(context, "⚠️ Error en Google Identity Services: $errorMsg", Toast.LENGTH_LONG).show()
+                                                }
                                             }
                                         )
                                     }
@@ -671,18 +670,6 @@ fun ProfileScreen(
                                     text = "Iniciar Sesión con Google (Gmail)",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
-                                )
-                            }
-
-                            OutlinedButton(
-                                onClick = { showSignInDialog = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Text(
-                                    text = "Ingresar correo Gmail manualmente",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
@@ -758,7 +745,7 @@ fun ProfileScreen(
             text = {
                 Column {
                     Text(
-                        text = "El PIN debe tener 4 dígitos numéricos para proteger el acceso a tus finanzas.",
+                        text = "El PIN debe tener 4 dígitos numéricos para proteger el acceso a tus finanzas.\nSe guardará en tu móvil y se respaldará en Firebase (pinuser) vinculado a tu cuenta Gmail: ${uiState.userEmail}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -810,12 +797,23 @@ fun ProfileScreen(
                         } else if (newPinInput != confirmPinInput) {
                             pinErrorMessage = "Los PINs no coinciden. Verifica e intenta de nuevo."
                         } else {
-                            val success = securityManager?.updatePin(newPinInput) ?: false
-                            if (success) {
-                                showChangePinDialog = false
-                                Toast.makeText(context, "✅ PIN actualizado exitosamente", Toast.LENGTH_SHORT).show()
+                            if (onChangePin != null) {
+                                onChangePin.invoke(newPinInput) { ok ->
+                                    if (ok) {
+                                        showChangePinDialog = false
+                                        Toast.makeText(context, "✅ PIN actualizado y guardado en Firebase (pinuser)", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        pinErrorMessage = "Error al guardar el nuevo PIN en Firebase."
+                                    }
+                                }
                             } else {
-                                pinErrorMessage = "Error al guardar el nuevo PIN."
+                                val success = securityManager?.updatePin(newPinInput) ?: false
+                                if (success) {
+                                    showChangePinDialog = false
+                                    Toast.makeText(context, "✅ PIN actualizado exitosamente", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    pinErrorMessage = "Error al guardar el nuevo PIN."
+                                }
                             }
                         }
                     },
@@ -826,74 +824,6 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showChangePinDialog = false }) {
-                    Text("Cancelar")
-                }
-            }
-        )
-    }
-
-    // Sign In Dialog
-    if (showSignInDialog) {
-        AlertDialog(
-            onDismissRequest = { showSignInDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    tint = SleekPrimary,
-                    modifier = Modifier.size(32.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "Vincular Cuenta Google / Gmail",
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "Ingresa los datos para sincronizar tu presupuesto:",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = loginNameInput,
-                        onValueChange = { loginNameInput = it },
-                        label = { Text("Nombre Completo") },
-                        placeholder = { Text("Ej: Francisco J.") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = loginEmailInput,
-                        onValueChange = { loginEmailInput = it },
-                        label = { Text("Correo Gmail") },
-                        placeholder = { Text("ejemplo@gmail.com") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val email = if (loginEmailInput.isNotBlank()) loginEmailInput.trim() else "usuario@gmail.com"
-                        val name = if (loginNameInput.isNotBlank()) loginNameInput.trim() else "Usuario Gmail"
-                        onLogin(email, name)
-                        showSignInDialog = false
-                        Toast.makeText(context, "Sesión iniciada con $email", Toast.LENGTH_SHORT).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
-                ) {
-                    Text("Iniciar Sesión")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSignInDialog = false }) {
                     Text("Cancelar")
                 }
             }
