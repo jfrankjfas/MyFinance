@@ -122,13 +122,16 @@ fun AppUpdateCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Versión instalada: v$currentVer • Detección automática",
+                        text = "Versión: v$currentVer • Repo: ${updateManager.getRepositoryName()}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                IconButton(onClick = { showRepoDialog = !showRepoDialog }) {
+                IconButton(onClick = { 
+                    repoInput = updateManager.getRepositoryName()
+                    showRepoDialog = !showRepoDialog 
+                }) {
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "Configurar Repositorio",
@@ -153,7 +156,7 @@ fun AppUpdateCard(
                         OutlinedTextField(
                             value = repoInput,
                             onValueChange = { repoInput = it },
-                            placeholder = { Text("usuario/repositorio") },
+                            placeholder = { Text("jfrankjfas/MyFinance") },
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp)
@@ -163,7 +166,7 @@ fun AppUpdateCard(
                             onClick = {
                                 updateManager.setRepositoryName(repoInput)
                                 showRepoDialog = false
-                                Toast.makeText(context, "Repositorio guardado: $repoInput", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Repositorio guardado: ${updateManager.getRepositoryName()}", Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
@@ -177,12 +180,19 @@ fun AppUpdateCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Text(
-                text = "La aplicación detecta y comprueba actualizaciones de forma automática al iniciarse. Las nuevas versiones se instalan directamente sin requerir descargas manuales de archivos externos.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 16.sp
-            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "ℹ️ ¿Cómo se detectan los cambios? La app compara la versión actual (v$currentVer) contra la última Release o Tag en GitHub (jfrankjfas/MyFinance) o Firestore. Cuando publiques una nueva versión (ej: v1.1), se detectará automáticamente al iniciar la app.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 15.sp,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
 
             // Result states
             if (isUpToDate) {

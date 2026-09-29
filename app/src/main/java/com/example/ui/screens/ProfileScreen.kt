@@ -641,6 +641,16 @@ fun ProfileScreen(
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
+                                        val am = android.accounts.AccountManager.get(context)
+                                        val deviceAccounts = try { am.getAccountsByType("com.google") } catch (e: Exception) { emptyArray() }
+                                        if (deviceAccounts.isNotEmpty()) {
+                                            val accEmail = deviceAccounts[0].name
+                                            val name = accEmail.substringBefore("@")
+                                            onLogin(accEmail, name)
+                                            Toast.makeText(context, "¡Sesión iniciada con $accEmail!", Toast.LENGTH_SHORT).show()
+                                            return@launch
+                                        }
+
                                         val googleIdManager = GoogleIdentityManager(context)
                                         googleIdManager.signInWithGoogle(
                                             activityContext = context,

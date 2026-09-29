@@ -148,7 +148,7 @@ class FirebaseFinanceManager(
             disconnectUser()
             return
         }
-        val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
+        val cleanEmail = email.trim().lowercase().removePrefix("acc_").replace(".", "_").replace("@", "_at_")
         activeUserId = "acc_$cleanEmail"
         _syncStatus.value = _syncStatus.value.copy(
             isConnected = true,
@@ -171,203 +171,355 @@ class FirebaseFinanceManager(
         )
     }
 
+    private fun parseTransactionsFromDocs(docs: List<com.google.firebase.firestore.DocumentSnapshot>): List<TransactionEntity> {
+        val list = mutableListOf<TransactionEntity>()
+        for (doc in docs) {
+            try {
+                val id = doc.getLong("id")?.toInt() ?: (doc.id.replace("tx_", "").toIntOrNull() ?: 0)
+                val title = doc.getString("title") ?: ""
+                val amount = doc.getDouble("amount") ?: 0.0
+                val category = doc.getString("category") ?: "Varios"
+                val type = doc.getString("type") ?: "EXPENSE"
+                val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                val note = doc.getString("note") ?: ""
+                val isAi = doc.getBoolean("isAiCategorized") ?: false
+                val attachment = doc.getString("attachmentUri")
+                val dueDate = doc.getLong("dueDate")
+                val hasReminder = doc.getBoolean("hasReminderScheduled") ?: false
+
+                if (title.isNotBlank()) {
+                    list.add(
+                        TransactionEntity(
+                            id = id,
+                            title = title,
+                            amount = amount,
+                            category = category,
+                            type = type,
+                            timestamp = timestamp,
+                            note = note,
+                            isAiCategorized = isAi,
+                            attachmentUri = attachment,
+                            dueDate = dueDate,
+                            hasReminderScheduled = hasReminder
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error parsing tx doc: ${e.message}")
+            }
+        }
+        return list
+    }
+
+    private fun parseBudgetsFromDocs(docs: List<com.google.firebase.firestore.DocumentSnapshot>): List<BudgetEntity> {
+        val list = mutableListOf<BudgetEntity>()
+        for (doc in docs) {
+            try {
+                val cat = doc.getString("category") ?: doc.id.replace("bg_", "").replace("_", "/")
+                val limit = doc.getDouble("limitAmount") ?: 0.0
+                val thresh = doc.getLong("alertThresholdPercent")?.toInt() ?: 80
+                if (cat.isNotBlank()) {
+                    list.add(BudgetEntity(category = cat, limitAmount = limit, alertThresholdPercent = thresh))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error parsing budget doc: ${e.message}")
+            }
+        }
+        return list
+    }
+
+    private fun parseScheduledFromDocs(docs: List<com.google.firebase.firestore.DocumentSnapshot>): List<ScheduledExpenseEntity> {
+        val list = mutableListOf<ScheduledExpenseEntity>()
+        for (doc in docs) {
+            try {
+                val id = doc.getLong("id") ?: (doc.id.replace("se_", "").toLongOrNull() ?: 0L)
+                val title = doc.getString("title") ?: ""
+                val amount = doc.getDouble("amount") ?: 0.0
+                val category = doc.getString("category") ?: "Servicios"
+                val dueDate = doc.getLong("dueDate") ?: System.currentTimeMillis()
+                val isPaid = doc.getBoolean("isPaid") ?: false
+                val notify = doc.getBoolean("notifyReminder") ?: true
+                val attachment = doc.getString("attachmentUri")
+                val note = doc.getString("note") ?: ""
+                val isEmergency = doc.getBoolean("isEmergencyPriority") ?: false
+
+                if (title.isNotBlank()) {
+                    list.add(
+                        ScheduledExpenseEntity(
+                            id = id,
+                            title = title,
+                            amount = amount,
+                            category = category,
+                            dueDate = dueDate,
+                            isPaid = isPaid,
+                            notifyReminder = notify,
+                            attachmentUri = attachment,
+                            note = note,
+                            isEmergencyPriority = isEmergency
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error parsing scheduled doc: ${e.message}")
+            }
+        }
+        return list
+    }
+
+    private fun parseFundsFromDocs(docs: List<com.google.firebase.firestore.DocumentSnapshot>): List<ExtraordinaryFundEntity> {
+        val list = mutableListOf<ExtraordinaryFundEntity>()
+        for (doc in docs) {
+            try {
+                val id = doc.getLong("id") ?: (doc.id.replace("ef_", "").toLongOrNull() ?: 0L)
+                val title = doc.getString("title") ?: ""
+                val total = doc.getDouble("totalAmount") ?: 0.0
+                val symbol = doc.getString("currencySymbol") ?: "$"
+                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                val note = doc.getString("note") ?: ""
+                val allocJson = doc.getString("allocationsJson") ?: "[]"
+
+                if (title.isNotBlank()) {
+                    list.add(
+                        ExtraordinaryFundEntity(
+                            id = id,
+                            title = title,
+                            totalAmount = total,
+                            currencySymbol = symbol,
+                            createdAt = createdAt,
+                            note = note,
+                            allocationsJson = allocJson
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error parsing fund doc: ${e.message}")
+            }
+        }
+        return list
+    }
+
+    private fun parseArchivedFromDocs(docs: List<com.google.firebase.firestore.DocumentSnapshot>): List<ArchivedPeriodEntity> {
+        val list = mutableListOf<ArchivedPeriodEntity>()
+        for (doc in docs) {
+            try {
+                val id = doc.getLong("id") ?: (doc.id.replace("ap_", "").toLongOrNull() ?: 0L)
+                val title = doc.getString("title") ?: ""
+                val mode = doc.getString("periodMode") ?: "MONTHLY"
+                val archivedAt = doc.getLong("archivedAt") ?: System.currentTimeMillis()
+                val limit = doc.getDouble("budgetLimit") ?: 0.0
+                val spent = doc.getDouble("totalSpent") ?: 0.0
+                val sched = doc.getDouble("totalScheduled") ?: 0.0
+                val symbol = doc.getString("currencySymbol") ?: "$"
+                val note = doc.getString("note") ?: ""
+                val txsJson = doc.getString("transactionsJson") ?: "[]"
+                val schJson = doc.getString("scheduledJson") ?: "[]"
+                val isClosed = doc.getBoolean("isClosed") ?: false
+
+                if (title.isNotBlank()) {
+                    list.add(
+                        ArchivedPeriodEntity(
+                            id = id,
+                            title = title,
+                            periodMode = mode,
+                            archivedAt = archivedAt,
+                            budgetLimit = limit,
+                            totalSpent = spent,
+                            totalScheduled = sched,
+                            currencySymbol = symbol,
+                            note = note,
+                            transactionsJson = txsJson,
+                            scheduledJson = schJson,
+                            isClosed = isClosed
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error parsing archive doc: ${e.message}")
+            }
+        }
+        return list
+    }
+
     suspend fun fetchUserDataFromCloud(email: String): CloudDataSnapshot = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val db = firestore ?: return@withContext CloudDataSnapshot()
         if (email.isBlank()) return@withContext CloudDataSnapshot()
 
-        val cleanEmail = email.trim().lowercase().replace(".", "_").replace("@", "_at_")
-        val userId = "acc_$cleanEmail"
-        activeUserId = userId
-        val userDoc = db.collection("finanzas_users").document(userId)
+        val rawEmail = email.trim().lowercase()
+        val cleanEmail = rawEmail.removePrefix("acc_").replace(".", "_").replace("@", "_at_")
+        val primaryId = "acc_$cleanEmail"
+        activeUserId = primaryId
 
-        val txList = mutableListOf<TransactionEntity>()
-        val bgList = mutableListOf<BudgetEntity>()
-        val scList = mutableListOf<ScheduledExpenseEntity>()
-        val efList = mutableListOf<ExtraordinaryFundEntity>()
-        val apList = mutableListOf<ArchivedPeriodEntity>()
+        // Build list of candidate document IDs where user data might have been previously stored
+        val candidateIds = linkedSetOf<String>()
+        candidateIds.add(primaryId)
+        candidateIds.add(cleanEmail)
+        candidateIds.add(rawEmail)
+        candidateIds.add(rawEmail.substringBefore("@"))
+        auth?.currentUser?.uid?.let { if (it.isNotBlank()) candidateIds.add(it) }
+        getOrCreateLocalUserId().let { if (it.isNotBlank()) candidateIds.add(it) }
+
+        // Cross-match username variations if email refers to jfrank / jfrancisco
+        if (rawEmail.contains("jfrankjfas")) {
+            val alt = rawEmail.replace("jfrankjfas", "jfranciscojfas")
+            val altClean = alt.replace(".", "_").replace("@", "_at_")
+            candidateIds.add("acc_$altClean")
+            candidateIds.add(altClean)
+            candidateIds.add(alt)
+        } else if (rawEmail.contains("jfranciscojfas")) {
+            val alt = rawEmail.replace("jfranciscojfas", "jfrankjfas")
+            val altClean = alt.replace(".", "_").replace("@", "_at_")
+            candidateIds.add("acc_$altClean")
+            candidateIds.add(altClean)
+            candidateIds.add(alt)
+        }
+
+        val txMap = LinkedHashMap<String, TransactionEntity>()
+        val bgMap = LinkedHashMap<String, BudgetEntity>()
+        val scMap = LinkedHashMap<String, ScheduledExpenseEntity>()
+        val efMap = LinkedHashMap<String, ExtraordinaryFundEntity>()
+        val apMap = LinkedHashMap<String, ArchivedPeriodEntity>()
         var cloudUserPin: String? = null
 
-        try {
-            // 0. Fetch root document to retrieve security PIN (pinuser)
-            try {
-                val rootSnap = userDoc.get().await()
-                cloudUserPin = rootSnap.getString("pinuser") ?: rootSnap.getString("securityPin")
-                if (cloudUserPin.isNullOrBlank()) {
-                    val directPinDoc = db.collection("pinuser").document(cleanEmail).get().await()
-                    cloudUserPin = directPinDoc.getString("pinuser") ?: directPinDoc.getString("pin") ?: directPinDoc.getString("securityPin")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error fetching user root pin doc: ${e.message}")
-            }
+        val rootCollections = listOf("finanzas_users", "users", "accounts")
 
-            // 1. Transactions
-            val txSnap = userDoc.collection("transactions").get().await()
-            for (doc in txSnap.documents) {
+        for (rootCol in rootCollections) {
+            for (cand in candidateIds) {
                 try {
-                    val id = doc.getLong("id")?.toInt() ?: (doc.id.replace("tx_", "").toIntOrNull() ?: 0)
-                    val title = doc.getString("title") ?: ""
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val category = doc.getString("category") ?: "Varios"
-                    val type = doc.getString("type") ?: "EXPENSE"
-                    val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
-                    val note = doc.getString("note") ?: ""
-                    val isAi = doc.getBoolean("isAiCategorized") ?: false
-                    val attachment = doc.getString("attachmentUri")
-                    val dueDate = doc.getLong("dueDate")
-                    val hasReminder = doc.getBoolean("hasReminderScheduled") ?: false
+                    val userDoc = db.collection(rootCol).document(cand)
 
-                    if (title.isNotBlank()) {
-                        txList.add(
-                            TransactionEntity(
-                                id = id,
-                                title = title,
-                                amount = amount,
-                                category = category,
-                                type = type,
-                                timestamp = timestamp,
-                                note = note,
-                                isAiCategorized = isAi,
-                                attachmentUri = attachment,
-                                dueDate = dueDate,
-                                hasReminderScheduled = hasReminder
-                            )
-                        )
+                    // Check security pin
+                    if (cloudUserPin.isNullOrBlank()) {
+                        try {
+                            val rootSnap = userDoc.get().await()
+                            cloudUserPin = rootSnap.getString("pinuser") ?: rootSnap.getString("securityPin")
+                        } catch (ePin: Exception) {
+                            // ignore
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error parsing cloud tx: ${e.message}")
-                }
-            }
 
-            // 2. Budgets
-            val bgSnap = userDoc.collection("budgets").get().await()
-            for (doc in bgSnap.documents) {
-                try {
-                    val cat = doc.getString("category") ?: doc.id
-                    val limit = doc.getDouble("limitAmount") ?: 0.0
-                    val thresh = doc.getLong("alertThresholdPercent")?.toInt() ?: 80
-                    bgList.add(BudgetEntity(category = cat, limitAmount = limit, alertThresholdPercent = thresh))
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error parsing cloud budget: ${e.message}")
-                }
-            }
-
-            // 3. Scheduled Expenses
-            val scSnap = userDoc.collection("scheduled_expenses").get().await()
-            for (doc in scSnap.documents) {
-                try {
-                    val id = doc.getLong("id") ?: (doc.id.replace("se_", "").toLongOrNull() ?: 0L)
-                    val title = doc.getString("title") ?: ""
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val category = doc.getString("category") ?: "Servicios"
-                    val dueDate = doc.getLong("dueDate") ?: System.currentTimeMillis()
-                    val isPaid = doc.getBoolean("isPaid") ?: false
-                    val notify = doc.getBoolean("notifyReminder") ?: true
-                    val attachment = doc.getString("attachmentUri")
-                    val note = doc.getString("note") ?: ""
-                    val isEmergency = doc.getBoolean("isEmergencyPriority") ?: false
-
-                    if (title.isNotBlank()) {
-                        scList.add(
-                            ScheduledExpenseEntity(
-                                id = id,
-                                title = title,
-                                amount = amount,
-                                category = category,
-                                dueDate = dueDate,
-                                isPaid = isPaid,
-                                notifyReminder = notify,
-                                attachmentUri = attachment,
-                                note = note,
-                                isEmergencyPriority = isEmergency
-                            )
-                        )
+                    // 1. Transactions
+                    try {
+                        val txSnap = userDoc.collection("transactions").get().await()
+                        parseTransactionsFromDocs(txSnap.documents).forEach { tx ->
+                            val key = if (tx.id > 0) "id_${tx.id}" else "${tx.title}_${tx.timestamp}_${tx.amount}"
+                            txMap[key] = tx
+                        }
+                    } catch (eTx: Exception) {
+                        Log.d(TAG, "No tx in $rootCol/$cand: ${eTx.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error parsing cloud scheduled: ${e.message}")
-                }
-            }
 
-            // 4. Extraordinary Funds
-            val efSnap = userDoc.collection("extraordinary_funds").get().await()
-            for (doc in efSnap.documents) {
-                try {
-                    val id = doc.getLong("id") ?: (doc.id.replace("ef_", "").toLongOrNull() ?: 0L)
-                    val title = doc.getString("title") ?: ""
-                    val total = doc.getDouble("totalAmount") ?: 0.0
-                    val symbol = doc.getString("currencySymbol") ?: "$"
-                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                    val note = doc.getString("note") ?: ""
-                    val allocJson = doc.getString("allocationsJson") ?: "[]"
-
-                    if (title.isNotBlank()) {
-                        efList.add(
-                            ExtraordinaryFundEntity(
-                                id = id,
-                                title = title,
-                                totalAmount = total,
-                                currencySymbol = symbol,
-                                createdAt = createdAt,
-                                note = note,
-                                allocationsJson = allocJson
-                            )
-                        )
+                    // 2. Budgets
+                    try {
+                        val bgSnap = userDoc.collection("budgets").get().await()
+                        parseBudgetsFromDocs(bgSnap.documents).forEach { bg ->
+                            bgMap[bg.category.lowercase().trim()] = bg
+                        }
+                    } catch (eBg: Exception) {
+                        Log.d(TAG, "No budgets in $rootCol/$cand: ${eBg.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error parsing cloud fund: ${e.message}")
-                }
-            }
 
-            // 5. Archived Periods
-            val apSnap = userDoc.collection("archived_periods").get().await()
-            for (doc in apSnap.documents) {
-                try {
-                    val id = doc.getLong("id") ?: (doc.id.replace("ap_", "").toLongOrNull() ?: 0L)
-                    val title = doc.getString("title") ?: ""
-                    val mode = doc.getString("periodMode") ?: "MONTHLY"
-                    val archivedAt = doc.getLong("archivedAt") ?: System.currentTimeMillis()
-                    val limit = doc.getDouble("budgetLimit") ?: 0.0
-                    val spent = doc.getDouble("totalSpent") ?: 0.0
-                    val sched = doc.getDouble("totalScheduled") ?: 0.0
-                    val symbol = doc.getString("currencySymbol") ?: "$"
-                    val note = doc.getString("note") ?: ""
-                    val txsJson = doc.getString("transactionsJson") ?: "[]"
-                    val schJson = doc.getString("scheduledJson") ?: "[]"
-                    val isClosed = doc.getBoolean("isClosed") ?: false
-
-                    if (title.isNotBlank()) {
-                        apList.add(
-                            ArchivedPeriodEntity(
-                                id = id,
-                                title = title,
-                                periodMode = mode,
-                                archivedAt = archivedAt,
-                                budgetLimit = limit,
-                                totalSpent = spent,
-                                totalScheduled = sched,
-                                currencySymbol = symbol,
-                                note = note,
-                                transactionsJson = txsJson,
-                                scheduledJson = schJson,
-                                isClosed = isClosed
-                            )
-                        )
+                    // 3. Scheduled
+                    try {
+                        val scSnap = userDoc.collection("scheduled_expenses").get().await()
+                        parseScheduledFromDocs(scSnap.documents).forEach { sc ->
+                            val key = if (sc.id > 0) "id_${sc.id}" else "${sc.title}_${sc.dueDate}"
+                            scMap[key] = sc
+                        }
+                    } catch (eSc: Exception) {
+                        Log.d(TAG, "No scheduled in $rootCol/$cand: ${eSc.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error parsing cloud archive: ${e.message}")
+
+                    // 4. Funds
+                    try {
+                        val efSnap = userDoc.collection("extraordinary_funds").get().await()
+                        parseFundsFromDocs(efSnap.documents).forEach { ef ->
+                            val key = if (ef.id > 0) "id_${ef.id}" else ef.title.trim()
+                            efMap[key] = ef
+                        }
+                    } catch (eEf: Exception) {
+                        Log.d(TAG, "No funds in $rootCol/$cand: ${eEf.message}")
+                    }
+
+                    // 5. Archived
+                    try {
+                        val apSnap = userDoc.collection("archived_periods").get().await()
+                        parseArchivedFromDocs(apSnap.documents).forEach { ap ->
+                            val key = if (ap.id > 0) "id_${ap.id}" else "${ap.title}_${ap.archivedAt}"
+                            apMap[key] = ap
+                        }
+                    } catch (eAp: Exception) {
+                        Log.d(TAG, "No archive in $rootCol/$cand: ${eAp.message}")
+                    }
+                } catch (eGeneral: Exception) {
+                    Log.d(TAG, "Query error for $rootCol/$cand: ${eGeneral.message}")
                 }
             }
-
-            _syncStatus.value = _syncStatus.value.copy(
-                isConnected = true,
-                cloudTransactionsCount = txList.size,
-                cloudBudgetsCount = bgList.size,
-                cloudScheduledCount = scList.size,
-                lastSyncTimestamp = System.currentTimeMillis(),
-                syncStatusText = "🟢 Traídos datos de Gmail (${txList.size} movs)"
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error fetching user cloud data: ${e.message}", e)
         }
+
+        // Also check standalone 'pinuser' collection
+        if (cloudUserPin.isNullOrBlank()) {
+            for (cand in candidateIds) {
+                try {
+                    val pinSnap = db.collection("pinuser").document(cand).get().await()
+                    val p = pinSnap.getString("pinuser") ?: pinSnap.getString("pin") ?: pinSnap.getString("securityPin")
+                    if (!p.isNullOrBlank()) {
+                        cloudUserPin = p
+                        break
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+            }
+        }
+
+        // Also check root 'transactions' collection with queries by email or userId
+        try {
+            val q1 = db.collection("transactions").whereEqualTo("userEmail", rawEmail).get().await()
+            parseTransactionsFromDocs(q1.documents).forEach { tx ->
+                val key = if (tx.id > 0) "id_${tx.id}" else "${tx.title}_${tx.timestamp}_${tx.amount}"
+                txMap[key] = tx
+            }
+            val q2 = db.collection("transactions").whereEqualTo("email", rawEmail).get().await()
+            parseTransactionsFromDocs(q2.documents).forEach { tx ->
+                val key = if (tx.id > 0) "id_${tx.id}" else "${tx.title}_${tx.timestamp}_${tx.amount}"
+                txMap[key] = tx
+            }
+        } catch (eRoot: Exception) {
+            Log.d(TAG, "Root collection query: ${eRoot.message}")
+        }
+
+        val txList = txMap.values.toList()
+        val bgList = bgMap.values.toList()
+        val scList = scMap.values.toList()
+        val efList = efMap.values.toList()
+        val apList = apMap.values.toList()
+
+        // If data was retrieved from candidate paths, ensure it is mirrored in primaryId
+        if (txList.isNotEmpty() || bgList.isNotEmpty() || scList.isNotEmpty()) {
+            launch {
+                try {
+                    txList.forEach { saveTransactionToCloud(it) }
+                    bgList.forEach { saveBudgetToCloud(it) }
+                    scList.forEach { saveScheduledExpenseToCloud(it) }
+                    efList.forEach { saveExtraordinaryFundToCloud(it) }
+                    apList.forEach { saveArchivedPeriodToCloud(it) }
+                    if (!cloudUserPin.isNullOrBlank()) {
+                        saveUserPin(rawEmail, cloudUserPin)
+                    }
+                } catch (eMirror: Exception) {
+                    Log.w(TAG, "Error mirroring data to primary path: ${eMirror.message}")
+                }
+            }
+        }
+
+        _syncStatus.value = _syncStatus.value.copy(
+            isConnected = true,
+            cloudTransactionsCount = txList.size,
+            cloudBudgetsCount = bgList.size,
+            cloudScheduledCount = scList.size,
+            lastSyncTimestamp = System.currentTimeMillis(),
+            syncStatusText = "🟢 Firebase Online (${txList.size} movs)"
+        )
 
         CloudDataSnapshot(
             transactions = txList,
@@ -377,6 +529,72 @@ class FirebaseFinanceManager(
             archivedPeriods = apList,
             userPin = cloudUserPin
         )
+    }
+
+    suspend fun syncAllBidirectional(
+        email: String,
+        localTxs: List<TransactionEntity>,
+        localBudgets: List<BudgetEntity>,
+        localScheduled: List<ScheduledExpenseEntity>,
+        localFunds: List<ExtraordinaryFundEntity>,
+        localArchived: List<ArchivedPeriodEntity>
+    ): CloudDataSnapshot = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        _syncStatus.value = _syncStatus.value.copy(
+            isSyncing = true,
+            syncStatusText = "Sincronizando con Firebase..."
+        )
+
+        // 1. Pull everything from cloud across all candidate locations
+        val cloudSnapshot = fetchUserDataFromCloud(email)
+
+        // 2. Merge local items with cloud items so local creations are pushed to cloud
+        try {
+            localTxs.forEach { saveTransactionToCloud(it) }
+            localBudgets.forEach { saveBudgetToCloud(it) }
+            localScheduled.forEach { saveScheduledExpenseToCloud(it) }
+            localFunds.forEach { saveExtraordinaryFundToCloud(it) }
+            localArchived.forEach { saveArchivedPeriodToCloud(it) }
+
+            // Combine into unified maps
+            val mergedTxs = (cloudSnapshot.transactions + localTxs).distinctBy {
+                if (it.id > 0) "id_${it.id}" else "${it.title}_${it.timestamp}_${it.amount}"
+            }
+            val mergedBudgets = (cloudSnapshot.budgets + localBudgets).distinctBy { it.category.lowercase().trim() }
+            val mergedScheduled = (cloudSnapshot.scheduledExpenses + localScheduled).distinctBy {
+                if (it.id > 0) "id_${it.id}" else "${it.title}_${it.dueDate}"
+            }
+            val mergedFunds = (cloudSnapshot.extraordinaryFunds + localFunds).distinctBy {
+                if (it.id > 0) "id_${it.id}" else it.title.trim()
+            }
+            val mergedArchived = (cloudSnapshot.archivedPeriods + localArchived).distinctBy {
+                if (it.id > 0) "id_${it.id}" else "${it.title}_${it.archivedAt}"
+            }
+
+            _syncStatus.value = _syncStatus.value.copy(
+                isSyncing = false,
+                lastSyncTimestamp = System.currentTimeMillis(),
+                cloudTransactionsCount = mergedTxs.size,
+                cloudBudgetsCount = mergedBudgets.size,
+                cloudScheduledCount = mergedScheduled.size,
+                syncStatusText = "🟢 Firebase Online (Sincronizado completo)"
+            )
+
+            CloudDataSnapshot(
+                transactions = mergedTxs,
+                budgets = mergedBudgets,
+                scheduledExpenses = mergedScheduled,
+                extraordinaryFunds = mergedFunds,
+                archivedPeriods = mergedArchived,
+                userPin = cloudSnapshot.userPin
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in bidirectional sync: ${e.message}", e)
+            _syncStatus.value = _syncStatus.value.copy(
+                isSyncing = false,
+                syncStatusText = "Error al sincronizar con Firebase"
+            )
+            cloudSnapshot
+        }
     }
 
     /**

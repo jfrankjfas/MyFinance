@@ -486,9 +486,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             if (initialIsLoggedIn && initialEmail.isNotBlank()) {
                 firebaseManager.updateUserAccount(initialEmail)
                 // Fetch and restore whatever is already linked to this Gmail account from Firestore
-                val count = repository.fetchAndRestoreAllFromCloud(initialEmail)
+                val count = repository.syncBidirectional(initialEmail)
                 if (count > 0) {
-                    _importMessage.value = "✅ Se recuperaron $count registros vinculados a tu cuenta Gmail ($initialEmail)."
+                    _importMessage.value = "✅ Se sincronizaron $count registros vinculados a tu cuenta ($initialEmail)."
                 }
             } else {
                 firebaseManager.disconnectUser()
@@ -522,8 +522,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun syncToFirebase() {
+        val email = _userEmail.value
         viewModelScope.launch {
-            repository.syncAllToCloud()
+            _isAiLoading.value = true
+            _importMessage.value = "Sincronizando con Firebase..."
+            if (email.isNotBlank()) {
+                val count = repository.syncBidirectional(email)
+                _importMessage.value = "🟢 Sincronización exitosa con Firebase ($count registros activos)."
+            } else {
+                repository.syncAllToCloud()
+                _importMessage.value = "🟢 Datos locales enviados a Firebase."
+            }
+            _isAiLoading.value = false
         }
     }
 
@@ -658,6 +668,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 cloudPinFound = cloudPin
                 securityManager?.setPinFromCloud(cloudPin)
             }
+            repository.syncBidirectional(cleanEmail)
 
             // Si el usuario suministró un PIN explícito al iniciar sesión, se graba en Firebase (pinuser)
             if (!securityPin.isNullOrBlank()) {

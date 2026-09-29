@@ -97,7 +97,10 @@ fun BackupScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var importJsonText by remember { mutableStateOf("") }
-    var showImportField by remember { mutableStateOf(false) }
+    var showBackupMenu by remember { mutableStateOf(false) }
+    var showCsvDialog by remember { mutableStateOf(false) }
+    var showJsonExportDialog by remember { mutableStateOf(false) }
+    var showJsonImportDialog by remember { mutableStateOf(false) }
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
 
     // Currencies customization
@@ -218,6 +221,16 @@ fun BackupScreen(
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
+                                        val am = android.accounts.AccountManager.get(context)
+                                        val deviceAccounts = try { am.getAccountsByType("com.google") } catch (e: Exception) { emptyArray() }
+                                        if (deviceAccounts.isNotEmpty()) {
+                                            val accEmail = deviceAccounts[0].name
+                                            val name = accEmail.substringBefore("@")
+                                            onLogin(accEmail, name)
+                                            Toast.makeText(context, "¡Sesión iniciada con $accEmail!", Toast.LENGTH_SHORT).show()
+                                            return@launch
+                                        }
+
                                         val googleIdManager = GoogleIdentityManager(context)
                                         googleIdManager.signInWithGoogle(
                                             activityContext = context,
@@ -249,29 +262,30 @@ fun BackupScreen(
             AppUpdateCard()
         }
 
-        // Firebase Cloud Realtime Database Card
+        // Menú Compacto de Respaldos y Sincronización Nube
         item {
             val fbStatus = uiState.firebaseSyncStatus
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 border = BorderStroke(1.dp, PrimaryEmerald.copy(alpha = 0.35f))
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(42.dp)
                                 .clip(CircleShape)
                                 .background(PrimaryEmerald.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.CloudDone,
-                                contentDescription = "Firebase Firestore",
+                                imageVector = Icons.Default.CloudSync,
+                                contentDescription = "Sincronización y Respaldos",
                                 tint = PrimaryEmerald,
                                 modifier = Modifier.size(24.dp)
                             )
@@ -281,242 +295,85 @@ fun BackupScreen(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Base de Datos en Tiempo Real (Firebase)",
+                                text = "Sincronización y Respaldos",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (fbStatus.isConnected) "🟢 En vivo (Sincronización instantánea activa)" else fbStatus.syncStatusText,
+                                text = if (fbStatus.isConnected) "🟢 Firebase Conectado • ${uiState.transactions.size} movs" else fbStatus.syncStatusText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (fbStatus.isConnected) PrimaryEmerald else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "Todos tus movimientos, gastos programados, fondos extraordinarios y presupuestos están respaldados en la nube de Firebase Firestore en tiempo real. Aunque cierres la app o cambies de dispositivo, tus datos no se perderán.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
                     Spacer(modifier = Modifier.height(14.dp))
-
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceAround
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${uiState.transactions.size}", fontWeight = FontWeight.Bold, color = PrimaryEmerald, fontSize = 16.sp)
-                                Text("Transacciones", style = MaterialTheme.typography.labelSmall)
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${uiState.budgets.size}", fontWeight = FontWeight.Bold, color = SleekPrimary, fontSize = 16.sp)
-                                Text("Presupuestos", style = MaterialTheme.typography.labelSmall)
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${uiState.scheduledExpenses.size}", fontWeight = FontWeight.Bold, color = WarningAmber, fontSize = 16.sp)
-                                Text("Programados", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Button(
-                        onClick = onSyncFirebase,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
-                        enabled = !fbStatus.isSyncing
-                    ) {
-                        Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (fbStatus.isSyncing) "Sincronizando con Firebase..." else "Forzar Sincronización Nube Firebase")
-                    }
-                }
-            }
-        }
-
-        // 2. Google Drive Backup Card
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(IncomeGreen.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDone,
-                                contentDescription = "Google Drive",
-                                tint = IncomeGreen,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Respaldos en Google Drive",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = uiState.lastDriveSync ?: "Vinculación activa con Google Drive",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = onSyncGoogleDrive,
-                            modifier = Modifier.weight(1f),
+                            onClick = onSyncFirebase,
+                            modifier = Modifier.weight(1.2f),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
+                            enabled = !fbStatus.isSyncing
                         ) {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Guardar en Drive", fontSize = 12.sp)
+                            Text(if (fbStatus.isSyncing) "Sincronizando..." else "Sincronizar Nube", fontSize = 12.sp)
                         }
 
-                        OutlinedButton(
-                            onClick = onRestoreGoogleDrive,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Restaurar Drive", fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
+                        Box {
+                            OutlinedButton(
+                                onClick = { showBackupMenu = true },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Opciones ▼", fontSize = 12.sp)
+                            }
 
-        // 3. Export to Excel (CSV) Card
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(SleekPrimaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.TableChart,
-                                contentDescription = "Excel CSV",
-                                tint = SleekPrimary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Exportar a Excel / Hojas de Cálculo",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Genera un reporte en formato CSV compatible con Excel y Google Sheets.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = onGenerateExcelCsv,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
-                    ) {
-                        Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Generar Reporte Excel (.csv)")
-                    }
-
-                    AnimatedVisibility(visible = uiState.csvExportData != null) {
-                        uiState.csvExportData?.let { csv ->
-                            Column(modifier = Modifier.padding(top = 14.dp)) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "📊 Previsualización de Datos Excel:",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp,
-                                                color = SleekPrimary
-                                            )
-                                            OutlinedButton(
-                                                onClick = {
-                                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                                    val clip = ClipData.newPlainText("FinanzasClara Excel CSV", csv)
-                                                    clipboard.setPrimaryClip(clip)
-                                                    Toast.makeText(context, "Reporte CSV copiado al portapapeles", Toast.LENGTH_SHORT).show()
-                                                },
-                                                shape = RoundedCornerShape(8.dp)
-                                            ) {
-                                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("Copiar CSV", fontSize = 11.sp)
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = csv,
-                                            fontSize = 10.sp,
-                                            maxLines = 8,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
+                            DropdownMenu(
+                                expanded = showBackupMenu,
+                                onDismissRequest = { showBackupMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("☁️ Guardar en Google Drive") },
+                                    onClick = {
+                                        showBackupMenu = false
+                                        onSyncGoogleDrive()
                                     }
-                                }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("📥 Restaurar de Google Drive") },
+                                    onClick = {
+                                        showBackupMenu = false
+                                        onRestoreGoogleDrive()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("📊 Exportar a Excel (CSV)") },
+                                    onClick = {
+                                        showBackupMenu = false
+                                        onGenerateExcelCsv()
+                                        showCsvDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("💾 Exportar Respaldo JSON") },
+                                    onClick = {
+                                        showBackupMenu = false
+                                        onGenerateBackup()
+                                        showJsonExportDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("📄 Importar Respaldo JSON") },
+                                    onClick = {
+                                        showBackupMenu = false
+                                        showJsonImportDialog = true
+                                    }
+                                )
                             }
                         }
                     }
@@ -717,133 +574,156 @@ fun BackupScreen(
             }
         }
 
-        // 5. JSON Manual Export / Import Card
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+        item { Spacer(modifier = Modifier.height(30.dp)) }
+    }
+
+    // Modal Dialog: Exportar CSV
+    if (showCsvDialog && uiState.csvExportData != null) {
+        val csv = uiState.csvExportData!!
+        AlertDialog(
+            onDismissRequest = { showCsvDialog = false },
+            title = { Text("📊 Reporte Excel (.csv)", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
                     Text(
-                        text = "Copia Manual de Respaldo (JSON)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Exporta o importa el código JSON bruto de tus transacciones para transferencias rápidas.",
+                        text = "Reporte exportado en formato CSV listo para Excel y Google Sheets:",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Button(
-                            onClick = onGenerateBackup,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Exportar JSON", fontSize = 12.sp)
-                        }
-
-                        OutlinedButton(
-                            onClick = { showImportField = !showImportField },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Importar JSON", fontSize = 12.sp)
-                        }
-                    }
-
-                    AnimatedVisibility(visible = uiState.backupJson != null) {
-                        uiState.backupJson?.let { jsonStr ->
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(
-                                        text = "✅ Respaldo JSON Generado:",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = SleekPrimary
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = jsonStr,
-                                        fontSize = 10.sp,
-                                        maxLines = 6,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(visible = showImportField) {
-                        Column {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            OutlinedTextField(
-                                value = importJsonText,
-                                onValueChange = { importJsonText = it },
-                                label = { Text("Pega el JSON de respaldo aquí") },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                maxLines = 6
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Button(
-                                onClick = {
-                                    onRestoreBackup(importJsonText)
-                                    showImportField = false
-                                },
-                                enabled = importJsonText.isNotBlank(),
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
-                            ) {
-                                Text("Restaurar Datos JSON")
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(visible = uiState.importMessage != null) {
-                        uiState.importMessage?.let { msg ->
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Surface(
-                                color = SleekPrimaryContainer,
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Info, contentDescription = null, tint = SleekPrimary)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(text = msg, fontSize = 12.sp, color = SleekOnPrimaryContainer)
-                                }
-                            }
-                        }
+                        Text(
+                            text = csv,
+                            fontSize = 11.sp,
+                            maxLines = 10,
+                            modifier = Modifier.padding(10.dp)
+                        )
                     }
                 }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("FinanzasClara CSV", csv)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Reporte CSV copiado al portapapeles", Toast.LENGTH_SHORT).show()
+                        showCsvDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Copiar CSV")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCsvDialog = false }) {
+                    Text("Cerrar")
+                }
             }
-        }
+        )
+    }
 
-        item { Spacer(modifier = Modifier.height(30.dp)) }
+    // Modal Dialog: Exportar JSON
+    if (showJsonExportDialog && uiState.backupJson != null) {
+        val json = uiState.backupJson!!
+        AlertDialog(
+            onDismissRequest = { showJsonExportDialog = false },
+            title = { Text("💾 Respaldo JSON Generado", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "Copia este texto JSON para guardarlo o transferirlo a otro dispositivo:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = json,
+                            fontSize = 10.sp,
+                            maxLines = 10,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("FinanzasClara Backup JSON", json)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Respaldo JSON copiado al portapapeles", Toast.LENGTH_SHORT).show()
+                        showJsonExportDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Copiar JSON")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showJsonExportDialog = false }) {
+                    Text("Cerrar")
+                }
+            }
+        )
+    }
+
+    // Modal Dialog: Importar JSON
+    if (showJsonImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showJsonImportDialog = false },
+            title = { Text("📄 Importar Respaldo JSON", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "Pega aquí el texto JSON de respaldo para restaurar tus registros:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = importJsonText,
+                        onValueChange = { importJsonText = it },
+                        placeholder = { Text("Pega el JSON aquí...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 6,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRestoreBackup(importJsonText)
+                        showJsonImportDialog = false
+                        importJsonText = ""
+                        Toast.makeText(context, "Restaurando datos JSON...", Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = importJsonText.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                ) {
+                    Text("Restaurar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showJsonImportDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     if (showSignOutConfirmDialog) {

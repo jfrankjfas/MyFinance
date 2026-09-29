@@ -180,12 +180,47 @@ class FinanceRepository(
     suspend fun fetchAndRestoreAllFromCloud(email: String, onPinRestored: ((String) -> Unit)? = null): Int {
         val manager = firebaseManager ?: return 0
         val snapshot = manager.fetchUserDataFromCloud(email)
-        clearLocalDataOnly()
+        val totalRemote = snapshot.transactions.size + snapshot.budgets.size +
+                snapshot.scheduledExpenses.size + snapshot.extraordinaryFunds.size +
+                snapshot.archivedPeriods.size
 
-        if (!snapshot.userPin.isNullOrBlank()) {
+        if (totalRemote > 0) {
+            clearLocalDataOnly()
+            if (!snapshot.userPin.isNullOrBlank()) {
+                onPinRestored?.invoke(snapshot.userPin)
+            }
+
+            if (snapshot.transactions.isNotEmpty()) {
+                transactionDao.insertAll(snapshot.transactions)
+            }
+            if (snapshot.budgets.isNotEmpty()) {
+                budgetDao.insertAll(snapshot.budgets)
+            }
+            snapshot.scheduledExpenses.forEach {
+                scheduledExpenseDao.insertScheduledExpense(it)
+            }
+            snapshot.extraordinaryFunds.forEach {
+                extraordinaryFundDao.insertFund(it)
+            }
+            snapshot.archivedPeriods.forEach {
+                archivedPeriodDao.insertArchivedPeriod(it)
+            }
+        } else if (!snapshot.userPin.isNullOrBlank()) {
             onPinRestored?.invoke(snapshot.userPin)
         }
 
+        return totalRemote
+    }
+
+    suspend fun syncBidirectional(email: String): Int {
+        val manager = firebaseManager ?: return 0
+        val txs = allTransactions.first()
+        val bgs = allBudgets.first()
+        val sched = allScheduledExpenses.first()
+        val funds = allExtraordinaryFunds.first()
+        val arch = allArchivedPeriods.first()
+
+        val snapshot = manager.syncAllBidirectional(email, txs, bgs, sched, funds, arch)
         if (snapshot.transactions.isNotEmpty()) {
             transactionDao.insertAll(snapshot.transactions)
         }
@@ -201,7 +236,6 @@ class FinanceRepository(
         snapshot.archivedPeriods.forEach {
             archivedPeriodDao.insertArchivedPeriod(it)
         }
-
         return snapshot.transactions.size + snapshot.budgets.size +
                 snapshot.scheduledExpenses.size + snapshot.extraordinaryFunds.size +
                 snapshot.archivedPeriods.size

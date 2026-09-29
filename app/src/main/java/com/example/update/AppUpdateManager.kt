@@ -32,7 +32,7 @@ class AppUpdateManager(private val context: Context) {
         // Configurable GitHub repo: user can change this in app settings if needed
         private const val PREFS_NAME = "finanzas_clara_prefs"
         private const val KEY_GITHUB_REPO = "github_repo_owner_name"
-        const val DEFAULT_GITHUB_REPO = "jfranciscojfas/finanzas-clara"
+        const val DEFAULT_GITHUB_REPO = "jfrankjfas/MyFinance"
     }
 
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
@@ -42,13 +42,25 @@ class AppUpdateManager(private val context: Context) {
 
     fun getRepositoryName(): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_GITHUB_REPO, DEFAULT_GITHUB_REPO) ?: DEFAULT_GITHUB_REPO
+        val saved = prefs.getString(KEY_GITHUB_REPO, null)
+        // Automatically migrate if saved with the old incorrect repository
+        if (saved == null || saved == "jfranciscojfas/finanzas-clara" || saved.contains("finanzas-clara")) {
+            setRepositoryName(DEFAULT_GITHUB_REPO)
+            return DEFAULT_GITHUB_REPO
+        }
+        return saved
     }
 
     fun setRepositoryName(repo: String) {
-        val clean = repo.trim().removePrefix("https://github.com/").removeSuffix("/")
+        val clean = repo.trim()
+            .removePrefix("https://github.com/")
+            .removePrefix("http://github.com/")
+            .removePrefix("github.com/")
+            .removeSuffix(".git")
+            .removeSuffix("/")
+        val finalRepo = if (clean.isBlank()) DEFAULT_GITHUB_REPO else clean
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_GITHUB_REPO, clean).apply()
+        prefs.edit().putString(KEY_GITHUB_REPO, finalRepo).apply()
     }
 
     fun getInstalledVersionName(): String {
@@ -91,8 +103,8 @@ class AppUpdateManager(private val context: Context) {
         }
 
         // 2. Fallback to GitHub Releases API
+        val repo = getRepositoryName()
         try {
-            val repo = getRepositoryName()
             val url = "https://api.github.com/repos/$repo/releases/latest"
             Log.d(TAG, "Checking update at GitHub: $url")
 
@@ -103,59 +115,89 @@ class AppUpdateManager(private val context: Context) {
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                if (response.code == 404) {
-                    return@withContext Result.success(
-                        UpdateInfo(
-                            hasUpdate = false,
-                            latestVersion = currentVer,
-                            releaseNotes = "No hay actualizaciones publicadas en GitHub por el momento.",
-                            apkDownloadUrl = "",
-                            releaseDate = ""
-                        )
-                    )
-                }
-                return@withContext Result.failure(Exception("Servidor de actualizaciones respondió: Código ${response.code}"))
-            }
+            if (response.isSuccessful) {
+                val bodyString = response.body?.string() ?: return@withContext Result.failure(Exception("Respuesta vacía de GitHub"))
+                val json = JSONObject(bodyString)
 
-            val bodyString = response.body?.string() ?: return@withContext Result.failure(Exception("Respuesta vacía de GitHub"))
-            val json = JSONObject(bodyString)
+                val tagName = json.optString("tag_name", "").removePrefix("v")
+                val releaseNotes = json.optString("body", "Mejoras de rendimiento y sincronización.")
+                val publishedAt = json.optString("published_at", "").take(10)
 
-            val tagName = json.optString("tag_name", "").removePrefix("v")
-            val releaseNotes = json.optString("body", "Mejoras de rendimiento y sincronización.")
-            val publishedAt = json.optString("published_at", "").take(10)
+                // Look for APK in release assets
+                val assets = json.optJSONArray("assets")
+                var downloadUrl = ""
 
-            // Look for APK in release assets
-            val assets = json.optJSONArray("assets")
-            var downloadUrl = ""
-
-            if (assets != null && assets.length() > 0) {
-                for (i in 0 until assets.length()) {
-                    val asset = assets.getJSONObject(i)
-                    val name = asset.optString("name", "")
-                    if (name.endsWith(".apk", ignoreCase = true)) {
-                        downloadUrl = asset.optString("browser_download_url", "")
-                        break
+                if (assets != null && assets.length() > 0) {
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.getJSONObject(i)
+                        val name = asset.optString("name", "")
+                        if (name.endsWith(".apk", ignoreCase = true)) {
+                            downloadUrl = asset.optString("browser_download_url", "")
+                            break
+                        }
                     }
                 }
-            }
 
-            // Fallback to direct asset download URL if none found in array
-            if (downloadUrl.isBlank()) {
-                downloadUrl = "https://github.com/$repo/releases/latest/download/app-debug.apk"
-            }
+                // Fallback to direct asset download URL if none found in array
+                if (downloadUrl.isBlank()) {
+                    downloadUrl = "https://github.com/$repo/releases/latest/download/app-debug.apk"
+                }
 
-            val hasUpdate = isNewerVersion(currentVer, tagName)
+                val hasUpdate = isNewerVersion(currentVer, tagName)
 
-            Result.success(
-                UpdateInfo(
-                    hasUpdate = hasUpdate,
-                    latestVersion = if (tagName.isNotBlank()) tagName else currentVer,
-                    releaseNotes = releaseNotes,
-                    apkDownloadUrl = downloadUrl,
-                    releaseDate = publishedAt
+                return@withContext Result.success(
+                    UpdateInfo(
+                        hasUpdate = hasUpdate,
+                        latestVersion = if (tagName.isNotBlank()) tagName else currentVer,
+                        releaseNotes = releaseNotes,
+                        apkDownloadUrl = downloadUrl,
+                        releaseDate = publishedAt
+                    )
                 )
-            )
+            } else if (response.code == 404) {
+                // Try GitHub Tags if Releases are not yet created
+                try {
+                    val tagsUrl = "https://api.github.com/repos/$repo/tags"
+                    val tagsReq = Request.Builder()
+                        .url(tagsUrl)
+                        .header("Accept", "application/vnd.github.v3+json")
+                        .header("User-Agent", "FinanzasClara-App")
+                        .build()
+                    val tagsResp = httpClient.newCall(tagsReq).execute()
+                    if (tagsResp.isSuccessful) {
+                        val tagsBody = tagsResp.body?.string() ?: "[]"
+                        val tagsArr = org.json.JSONArray(tagsBody)
+                        if (tagsArr.length() > 0) {
+                            val latestTagObj = tagsArr.getJSONObject(0)
+                            val latestTagName = latestTagObj.optString("name", "").removePrefix("v")
+                            val hasUpdate = isNewerVersion(currentVer, latestTagName)
+                            return@withContext Result.success(
+                                UpdateInfo(
+                                    hasUpdate = hasUpdate,
+                                    latestVersion = latestTagName,
+                                    releaseNotes = "Nueva versión etiquetada en GitHub: v$latestTagName",
+                                    apkDownloadUrl = "https://github.com/$repo/releases/download/v$latestTagName/app-debug.apk",
+                                    releaseDate = ""
+                                )
+                            )
+                        }
+                    }
+                } catch (eTag: Exception) {
+                    Log.d(TAG, "Tags check skipped: ${eTag.message}")
+                }
+
+                return@withContext Result.success(
+                    UpdateInfo(
+                        hasUpdate = false,
+                        latestVersion = currentVer,
+                        releaseNotes = "Repositorio configurado: $repo. No hay releases ni versiones superiores publicadas.",
+                        apkDownloadUrl = "",
+                        releaseDate = ""
+                    )
+                )
+            } else {
+                return@withContext Result.failure(Exception("GitHub respondió: Código ${response.code}"))
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error checking updates: ${e.message}", e)
             Result.failure(e)
@@ -257,8 +299,18 @@ class AppUpdateManager(private val context: Context) {
 
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
+
+            val resolveInfoList = activity.packageManager.queryIntentActivities(installIntent, 0)
+            for (resolveInfo in resolveInfoList) {
+                activity.grantUriPermission(
+                    resolveInfo.activityInfo.packageName,
+                    apkUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+
             activity.startActivity(installIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch package installer: ${e.message}", e)
