@@ -72,7 +72,8 @@ fun AppUpdateCard(
     val updateManager = remember { AppUpdateManager(context) }
 
     val currentVer = remember {
-        if (currentVersion.isNotBlank() && currentVersion != "1.0") currentVersion else updateManager.getInstalledVersionName()
+        val installed = updateManager.getInstalledVersionName()
+        if (installed.isNotBlank()) installed else "1.1"
     }
 
     var isChecking by remember { mutableStateOf(false) }
