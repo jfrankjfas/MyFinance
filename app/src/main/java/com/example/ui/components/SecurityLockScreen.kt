@@ -76,6 +76,7 @@ fun SecurityLockScreen(
     var isError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val shakeOffset = remember { Animatable(0f) }
+    val pinLength = remember { securityManager.getPinLength() }
 
     val canUseBiometric = remember {
         securityManager.canAuthenticateWithBiometrics() && securityManager.isBiometricEnabled()
@@ -113,13 +114,13 @@ fun SecurityLockScreen(
     }
 
     fun onDigitPress(digit: String) {
-        if (enteredPin.length < 4) {
+        if (enteredPin.length < pinLength) {
             val newPin = enteredPin + digit
             enteredPin = newPin
             isError = false
             errorMessage = null
 
-            if (newPin.length == 4) {
+            if (newPin.length == pinLength) {
                 if (securityManager.verifyPin(newPin)) {
                     onUnlocked()
                 } else {

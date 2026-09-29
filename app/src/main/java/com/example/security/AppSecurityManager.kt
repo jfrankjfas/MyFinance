@@ -82,11 +82,35 @@ class AppSecurityManager(private val context: Context) {
         return valid
     }
 
+    fun getPinLength(): Int {
+        return prefs.getInt("pin_length", 4)
+    }
+
+    fun getRawPin(): String {
+        return prefs.getString("saved_pin_raw", DEFAULT_PIN) ?: DEFAULT_PIN
+    }
+
     fun updatePin(newPin: String): Boolean {
-        if (newPin.length < 4) return false
+        if (newPin.length < 4 || newPin.length > 8) return false
         val newHash = hashPin(newPin)
-        prefs.edit().putString(KEY_PIN_HASH, newHash).apply()
+        prefs.edit()
+            .putString(KEY_PIN_HASH, newHash)
+            .putInt("pin_length", newPin.length)
+            .putString("saved_pin_raw", newPin)
+            .apply()
         return true
+    }
+
+    fun setPinFromCloud(cloudPin: String) {
+        if (cloudPin.isNotBlank() && cloudPin.length in 4..8) {
+            val newHash = hashPin(cloudPin)
+            prefs.edit()
+                .putString(KEY_PIN_HASH, newHash)
+                .putInt("pin_length", cloudPin.length)
+                .putString("saved_pin_raw", cloudPin)
+                .apply()
+            Log.d(TAG, "PIN updated from Firebase Firestore (pinuser)")
+        }
     }
 
     fun unlock() {
