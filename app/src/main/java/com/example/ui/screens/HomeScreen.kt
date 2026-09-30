@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Help
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.filled.CrisisAlert
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Warning
 import com.example.ui.components.FinancialRescueModal
+import com.example.ui.components.EditTransactionModal
 import com.example.ui.theme.WarningAmber
 import com.example.data.entity.TransactionEntity
 import com.example.ui.FinanceUiState
@@ -89,6 +91,7 @@ fun HomeScreen(
     uiState: FinanceUiState,
     onAddTransactionClicked: () -> Unit,
     onDeleteTransaction: (TransactionEntity) -> Unit,
+    onEditTransaction: (TransactionEntity, String, Double, String, String, String, Long, String) -> Unit = { _, _, _, _, _, _, _, _ -> },
     onCurrencySelected: (String) -> Unit,
     onCurrencyIndexSelected: (Int) -> Unit = {},
     onProfileClick: () -> Unit = {},
@@ -99,6 +102,7 @@ fun HomeScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showRescueModal by remember { mutableStateOf(false) }
     var viewerImageUri by remember { mutableStateOf<String?>(null) }
+    var selectedTransactionToEdit by remember { mutableStateOf<TransactionEntity?>(null) }
 
     val generalProgress = uiState.budgetProgresses.find { it.category == "Presupuesto Total Mensual" }
 
@@ -375,6 +379,7 @@ fun HomeScreen(
                     TransactionRowItem(
                         transaction = tx,
                         currencySymbol = uiState.currencySymbol,
+                        onEdit = { selectedTransactionToEdit = uiState.rawTransactions.find { it.id == tx.id } ?: tx },
                         onDelete = { onDeleteTransaction(tx) },
                         modifier = Modifier.animateItem()
                     )
@@ -441,12 +446,31 @@ fun HomeScreen(
             }
         }
     }
+
+    // Modal de Edición de Transacción
+    selectedTransactionToEdit?.let { txToEdit ->
+        val rawTx = uiState.rawTransactions.find { it.id == txToEdit.id } ?: txToEdit
+        EditTransactionModal(
+            transaction = rawTx,
+            exchangeRate2 = uiState.exchangeRate2,
+            onDismiss = { selectedTransactionToEdit = null },
+            onSave = { title, amount, category, type, note, timestamp, currency ->
+                onEditTransaction(rawTx, title, amount, category, type, note, timestamp, currency)
+                selectedTransactionToEdit = null
+            },
+            onDelete = {
+                onDeleteTransaction(rawTx)
+                selectedTransactionToEdit = null
+            }
+        )
+    }
 }
 
 @Composable
 fun TransactionRowItem(
     transaction: TransactionEntity,
     currencySymbol: String,
+    onEdit: () -> Unit = {},
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -457,7 +481,9 @@ fun TransactionRowItem(
     }
 
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onEdit() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
@@ -530,7 +556,7 @@ fun TransactionRowItem(
                 )
             }
 
-            // Amount and Delete button
+            // Amount, Edit and Delete buttons
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = "${if (transaction.type == "INCOME") "+" else "-"}$currencySymbol${String.format("%.2f", transaction.amount)}",
@@ -538,16 +564,38 @@ fun TransactionRowItem(
                     fontWeight = FontWeight.Bold,
                     color = if (transaction.type == "INCOME") IncomeGreen else ExpenseRed
                 )
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Eliminar",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(16.dp)
+                if (transaction.originalCurrency == "USD" && currencySymbol != "$") {
+                    Text(
+                        text = "$${String.format(Locale.US, "%.2f", transaction.originalAmount)} USD",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onEdit,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Editar",
+                            tint = SleekPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Eliminar",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }

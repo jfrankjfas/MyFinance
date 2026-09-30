@@ -186,13 +186,45 @@ class FirebaseFinanceManager(
                 val attachment = doc.getString("attachmentUri")
                 val dueDate = doc.getLong("dueDate")
                 val hasReminder = doc.getBoolean("hasReminderScheduled") ?: false
+                val rawAmount = doc.getDouble("amount") ?: 0.0
+                val rawOrigAmount = doc.getDouble("originalAmount") ?: 0.0
+                val explicitCurr = doc.getString("originalCurrency")?.uppercase()?.trim()
+
+                // Check for explicit [X USD] tag generated in note
+                val usdMatch = Regex("""\[(\d+(\.\d+)?) USD\]""").find(note)
+
+                val isRealUsd = when {
+                    explicitCurr == "USD" && rawOrigAmount > 0.0 && rawAmount > rawOrigAmount * 20.0 -> true
+                    usdMatch != null -> true
+                    explicitCurr == "USD" && rawOrigAmount > 0.0 && rawOrigAmount != rawAmount -> true
+                    else -> false
+                }
+
+                val finalOrigCurr = if (isRealUsd) "USD" else "NIO"
+                val finalExRate = if (isRealUsd) (doc.getDouble("exchangeRate") ?: 36.6243) else 1.0
+
+                val finalBaseAmount: Double
+                val finalOrigAmount: Double
+
+                if (isRealUsd) {
+                    val usdVal = usdMatch?.groupValues?.get(1)?.toDoubleOrNull()
+                        ?: if (rawOrigAmount > 0.0 && rawOrigAmount != rawAmount) rawOrigAmount
+                        else (rawAmount / finalExRate)
+
+                    finalOrigAmount = usdVal
+                    finalBaseAmount = if (rawAmount >= usdVal * 20.0) rawAmount else (usdVal * finalExRate)
+                } else {
+                    // Transaction is natively in Córdobas NIO
+                    finalBaseAmount = rawAmount
+                    finalOrigAmount = rawAmount
+                }
 
                 if (title.isNotBlank()) {
                     list.add(
                         TransactionEntity(
                             id = id,
                             title = title,
-                            amount = amount,
+                            amount = finalBaseAmount,
                             category = category,
                             type = type,
                             timestamp = timestamp,
@@ -200,7 +232,10 @@ class FirebaseFinanceManager(
                             isAiCategorized = isAi,
                             attachmentUri = attachment,
                             dueDate = dueDate,
-                            hasReminderScheduled = hasReminder
+                            hasReminderScheduled = hasReminder,
+                            originalAmount = finalOrigAmount,
+                            originalCurrency = finalOrigCurr,
+                            exchangeRate = finalExRate
                         )
                     )
                 }
@@ -539,6 +574,11 @@ class FirebaseFinanceManager(
         localFunds: List<ExtraordinaryFundEntity>,
         localArchived: List<ArchivedPeriodEntity>
     ): CloudDataSnapshot = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val rawEmail = email.trim().lowercase()
+        val cleanEmail = rawEmail.removePrefix("acc_").replace(".", "_").replace("@", "_at_")
+        val primaryId = "acc_$cleanEmail"
+        activeUserId = primaryId
+
         _syncStatus.value = _syncStatus.value.copy(
             isSyncing = true,
             syncStatusText = "Sincronizando con Firebase..."
@@ -549,11 +589,17 @@ class FirebaseFinanceManager(
 
         // 2. Merge local items with cloud items so local creations are pushed to cloud
         try {
-            localTxs.forEach { saveTransactionToCloud(it) }
-            localBudgets.forEach { saveBudgetToCloud(it) }
-            localScheduled.forEach { saveScheduledExpenseToCloud(it) }
-            localFunds.forEach { saveExtraordinaryFundToCloud(it) }
-            localArchived.forEach { saveArchivedPeriodToCloud(it) }
+            val db = firestore
+            if (db != null) {
+                val userDocRef = db.collection("finanzas_users").document(primaryId)
+                val userMeta = hashMapOf(
+                    "email" to rawEmail,
+                    "lastSync" to System.currentTimeMillis(),
+                    "userId" to primaryId,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                userDocRef.set(userMeta, SetOptions.merge()).await()
+            }
 
             // Combine into unified maps
             val mergedTxs = (cloudSnapshot.transactions + localTxs).distinctBy {
@@ -569,6 +615,9 @@ class FirebaseFinanceManager(
             val mergedArchived = (cloudSnapshot.archivedPeriods + localArchived).distinctBy {
                 if (it.id > 0) "id_${it.id}" else "${it.title}_${it.archivedAt}"
             }
+
+            // Commit all unified items to cloud using atomic awaited batches
+            syncAllLocalToCloud(mergedTxs, mergedBudgets, mergedScheduled, mergedFunds, mergedArchived)
 
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
@@ -677,42 +726,7 @@ class FirebaseFinanceManager(
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
-                    val list = mutableListOf<TransactionEntity>()
-                    for (doc in snapshot.documents) {
-                        try {
-                            val id = doc.getLong("id")?.toInt() ?: (doc.id.replace("tx_", "").toIntOrNull() ?: 0)
-                            val title = doc.getString("title") ?: ""
-                            val amount = doc.getDouble("amount") ?: 0.0
-                            val category = doc.getString("category") ?: "Varios"
-                            val type = doc.getString("type") ?: "EXPENSE"
-                            val timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
-                            val note = doc.getString("note") ?: ""
-                            val isAi = doc.getBoolean("isAiCategorized") ?: false
-                            val attachment = doc.getString("attachmentUri")
-                            val dueDate = doc.getLong("dueDate")
-                            val hasReminder = doc.getBoolean("hasReminderScheduled") ?: false
-
-                            if (title.isNotBlank()) {
-                                list.add(
-                                    TransactionEntity(
-                                        id = id,
-                                        title = title,
-                                        amount = amount,
-                                        category = category,
-                                        type = type,
-                                        timestamp = timestamp,
-                                        note = note,
-                                        isAiCategorized = isAi,
-                                        attachmentUri = attachment,
-                                        dueDate = dueDate,
-                                        hasReminderScheduled = hasReminder
-                                    )
-                                )
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Error parsing tx doc: ${e.message}")
-                        }
-                    }
+                    val list = parseTransactionsFromDocs(snapshot.documents)
                     _syncStatus.value = _syncStatus.value.copy(
                         isConnected = true,
                         cloudTransactionsCount = list.size,
@@ -876,6 +890,9 @@ class FirebaseFinanceManager(
             "attachmentUri" to (tx.attachmentUri ?: ""),
             "dueDate" to (tx.dueDate ?: 0L),
             "hasReminderScheduled" to tx.hasReminderScheduled,
+            "originalAmount" to tx.originalAmount,
+            "originalCurrency" to tx.originalCurrency,
+            "exchangeRate" to tx.exchangeRate,
             "updatedAt" to System.currentTimeMillis()
         )
         db.collection("finanzas_users").document(activeUserId)
@@ -1046,26 +1063,143 @@ class FirebaseFinanceManager(
         scheduled: List<ScheduledExpenseEntity>,
         funds: List<ExtraordinaryFundEntity>,
         archived: List<ArchivedPeriodEntity>
-    ) {
-        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
+    ) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return@withContext
+        val db = firestore ?: return@withContext
         _syncStatus.value = _syncStatus.value.copy(
             isSyncing = true,
             syncStatusText = "Sincronizando con Firebase..."
         )
         try {
-            transactions.forEach { saveTransactionToCloud(it) }
-            budgets.forEach { saveBudgetToCloud(it) }
-            scheduled.forEach { saveScheduledExpenseToCloud(it) }
-            funds.forEach { saveExtraordinaryFundToCloud(it) }
-            archived.forEach { saveArchivedPeriodToCloud(it) }
+            val userDoc = db.collection("finanzas_users").document(activeUserId)
+            userDoc.set(mapOf("lastBackupAt" to System.currentTimeMillis()), SetOptions.merge()).await()
+
+            // Transactions
+            transactions.chunked(300).forEach { chunk ->
+                val batch = db.batch()
+                chunk.forEach { tx ->
+                    val docId = if (tx.id > 0) "tx_${tx.id}" else "tx_${tx.timestamp}_${tx.title.hashCode()}"
+                    val ref = userDoc.collection("transactions").document(docId)
+                    val data = hashMapOf(
+                        "id" to tx.id,
+                        "title" to tx.title,
+                        "amount" to tx.amount,
+                        "category" to tx.category,
+                        "type" to tx.type,
+                        "timestamp" to tx.timestamp,
+                        "note" to tx.note,
+                        "isAiCategorized" to tx.isAiCategorized,
+                        "attachmentUri" to (tx.attachmentUri ?: ""),
+                        "dueDate" to (tx.dueDate ?: 0L),
+                        "hasReminderScheduled" to tx.hasReminderScheduled,
+                        "originalAmount" to tx.originalAmount,
+                        "originalCurrency" to tx.originalCurrency,
+                        "exchangeRate" to tx.exchangeRate,
+                        "updatedAt" to System.currentTimeMillis()
+                    )
+                    batch.set(ref, data, SetOptions.merge())
+                }
+                batch.commit().await()
+            }
+
+            // Budgets
+            if (budgets.isNotEmpty()) {
+                val batch = db.batch()
+                budgets.forEach { b ->
+                    val docId = "bg_${b.category.replace("/", "_")}"
+                    val ref = userDoc.collection("budgets").document(docId)
+                    val data = hashMapOf(
+                        "category" to b.category,
+                        "limitAmount" to b.limitAmount,
+                        "alertThresholdPercent" to b.alertThresholdPercent,
+                        "updatedAt" to System.currentTimeMillis()
+                    )
+                    batch.set(ref, data, SetOptions.merge())
+                }
+                batch.commit().await()
+            }
+
+            // Scheduled Expenses
+            if (scheduled.isNotEmpty()) {
+                val batch = db.batch()
+                scheduled.forEach { s ->
+                    val docId = if (s.id > 0) "se_${s.id}" else "se_${s.dueDate}_${s.title.hashCode()}"
+                    val ref = userDoc.collection("scheduled_expenses").document(docId)
+                    val data = hashMapOf(
+                        "id" to s.id,
+                        "title" to s.title,
+                        "amount" to s.amount,
+                        "category" to s.category,
+                        "dueDate" to s.dueDate,
+                        "isPaid" to s.isPaid,
+                        "notifyReminder" to s.notifyReminder,
+                        "attachmentUri" to (s.attachmentUri ?: ""),
+                        "note" to s.note,
+                        "isEmergencyPriority" to s.isEmergencyPriority,
+                        "updatedAt" to System.currentTimeMillis()
+                    )
+                    batch.set(ref, data, SetOptions.merge())
+                }
+                batch.commit().await()
+            }
+
+            // Extraordinary Funds
+            if (funds.isNotEmpty()) {
+                val batch = db.batch()
+                funds.forEach { f ->
+                    val docId = if (f.id > 0) "ef_${f.id}" else "ef_${f.title.hashCode()}"
+                    val ref = userDoc.collection("extraordinary_funds").document(docId)
+                    val data = hashMapOf(
+                        "id" to f.id,
+                        "title" to f.title,
+                        "totalAmount" to f.totalAmount,
+                        "currencySymbol" to f.currencySymbol,
+                        "note" to f.note,
+                        "allocationsJson" to f.allocationsJson,
+                        "createdAt" to f.createdAt,
+                        "updatedAt" to System.currentTimeMillis()
+                    )
+                    batch.set(ref, data, SetOptions.merge())
+                }
+                batch.commit().await()
+            }
+
+            // Archived Periods (Estados de Cuenta / EC)
+            if (archived.isNotEmpty()) {
+                val batch = db.batch()
+                archived.forEach { ap ->
+                    val docId = if (ap.id > 0) "ap_${ap.id}" else "ap_${ap.archivedAt}_${ap.title.hashCode()}"
+                    val ref = userDoc.collection("archived_periods").document(docId)
+                    val data = hashMapOf(
+                        "id" to ap.id,
+                        "title" to ap.title,
+                        "periodMode" to ap.periodMode,
+                        "archivedAt" to ap.archivedAt,
+                        "budgetLimit" to ap.budgetLimit,
+                        "totalSpent" to ap.totalSpent,
+                        "totalScheduled" to ap.totalScheduled,
+                        "currencySymbol" to ap.currencySymbol,
+                        "note" to ap.note,
+                        "transactionsJson" to ap.transactionsJson,
+                        "scheduledJson" to ap.scheduledJson,
+                        "isClosed" to ap.isClosed,
+                        "updatedAt" to System.currentTimeMillis()
+                    )
+                    batch.set(ref, data, SetOptions.merge())
+                }
+                batch.commit().await()
+            }
 
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
                 lastSyncTimestamp = System.currentTimeMillis(),
-                syncStatusText = "🟢 Firebase Online (Sincronizado completo)"
+                cloudTransactionsCount = transactions.size,
+                cloudBudgetsCount = budgets.size,
+                cloudScheduledCount = scheduled.size,
+                syncStatusText = "🟢 Firebase Online (${transactions.size} movs guardados)"
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Error syncing to cloud: ${e.message}")
+            Log.e(TAG, "Error syncing to cloud: ${e.message}", e)
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
                 syncStatusText = "Error al sincronizar con Firebase"

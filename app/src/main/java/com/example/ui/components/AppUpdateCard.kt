@@ -63,7 +63,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateCard(
-    currentVersion: String = "1.0",
+    currentVersion: String = "1.1",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current

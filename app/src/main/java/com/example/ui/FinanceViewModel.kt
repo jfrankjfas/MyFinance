@@ -135,28 +135,32 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         firebaseManager
     )
 
+    private val appPrefs = application.getSharedPreferences("finanzas_clara_prefs", android.content.Context.MODE_PRIVATE)
+    private val initialIsLoggedIn = appPrefs.getBoolean("is_logged_in", false)
+    private val initialEmail = if (initialIsLoggedIn) appPrefs.getString("saved_email", "") ?: "" else ""
+    private val initialName = if (initialIsLoggedIn) appPrefs.getString("saved_name", "") ?: "" else ""
+    private val initialCurrencyIndex = appPrefs.getInt("active_currency_index", 0)
+    private val initialExchangeRate2 = appPrefs.getString("exchange_rate_2", "36.6243")?.toDoubleOrNull() ?: 36.6243
+    private val initialExchangeRate3 = appPrefs.getString("exchange_rate_3", "39.809")?.toDoubleOrNull() ?: 39.809
+    private val initialCurrencySymbol = appPrefs.getString("currency_symbol", if (initialCurrencyIndex == 1) "$" else "C$") ?: "C$"
+
     private val _budgetPeriodMode = MutableStateFlow("MONTHLY") // "MONTHLY", "FORTNIGHT_1", "FORTNIGHT_2"
     val budgetPeriodMode: StateFlow<String> = _budgetPeriodMode.asStateFlow()
 
     private val _favoriteCurrencies = MutableStateFlow<List<CurrencyItem>>(WorldCurrencies.DEFAULT_3)
     val favoriteCurrencies: StateFlow<List<CurrencyItem>> = _favoriteCurrencies.asStateFlow()
 
-    private val _activeCurrencyIndex = MutableStateFlow(0) // Default to 0 (NIO C$ Córdobas - Moneda Principal)
+    private val _activeCurrencyIndex = MutableStateFlow(initialCurrencyIndex)
     val activeCurrencyIndex: StateFlow<Int> = _activeCurrencyIndex.asStateFlow()
 
-    private val _exchangeRate2 = MutableStateFlow(36.6243) // 1 USD = 36.6243 NIO C$
+    private val _exchangeRate2 = MutableStateFlow(initialExchangeRate2)
     val exchangeRate2: StateFlow<Double> = _exchangeRate2.asStateFlow()
 
-    private val _exchangeRate3 = MutableStateFlow(39.809)  // 1 EUR = 39.809 NIO C$
+    private val _exchangeRate3 = MutableStateFlow(initialExchangeRate3)
     val exchangeRate3: StateFlow<Double> = _exchangeRate3.asStateFlow()
 
-    private val _currencySymbol = MutableStateFlow("C$")
+    private val _currencySymbol = MutableStateFlow(initialCurrencySymbol)
     val currencySymbol: StateFlow<String> = _currencySymbol.asStateFlow()
-
-    private val appPrefs = application.getSharedPreferences("finanzas_clara_prefs", android.content.Context.MODE_PRIVATE)
-    private val initialIsLoggedIn = appPrefs.getBoolean("is_logged_in", false)
-    private val initialEmail = if (initialIsLoggedIn) appPrefs.getString("saved_email", "") ?: "" else ""
-    private val initialName = if (initialIsLoggedIn) appPrefs.getString("saved_name", "") ?: "" else ""
 
     private val _userEmail = MutableStateFlow(initialEmail)
     private val _userName = MutableStateFlow(initialName)
@@ -538,17 +542,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setActiveCurrencyIndex(index: Int) {
-        _activeCurrencyIndex.value = index.coerceIn(0, 2)
-        val symbol = _favoriteCurrencies.value.getOrNull(_activeCurrencyIndex.value)?.symbol ?: "$"
+        val safeIndex = index.coerceIn(0, 2)
+        _activeCurrencyIndex.value = safeIndex
+        val symbol = _favoriteCurrencies.value.getOrNull(safeIndex)?.symbol ?: "$"
         _currencySymbol.value = symbol
+        appPrefs.edit()
+            .putInt("active_currency_index", safeIndex)
+            .putString("currency_symbol", symbol)
+            .apply()
     }
 
     fun setCurrency(symbol: String) {
         val idx = _favoriteCurrencies.value.indexOfFirst { it.symbol == symbol }
-        if (idx >= 0) {
-            _activeCurrencyIndex.value = idx
-        }
+        val safeIndex = if (idx >= 0) idx else 0
+        _activeCurrencyIndex.value = safeIndex
         _currencySymbol.value = symbol
+        appPrefs.edit()
+            .putInt("active_currency_index", safeIndex)
+            .putString("currency_symbol", symbol)
+            .apply()
     }
 
     fun setThreeCurrencies(
@@ -560,12 +572,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     ) {
         val baseCordoba = if (c1.code == "NIO") c1 else WorldCurrencies.DEFAULT_3[0]
         _favoriteCurrencies.value = listOf(baseCordoba, c2, c3)
-        _exchangeRate2.value = customRate2 ?: c2.defaultRateToNio
-        _exchangeRate3.value = customRate3 ?: c3.defaultRateToNio
+        val rate2 = customRate2 ?: c2.defaultRateToNio
+        val rate3 = customRate3 ?: c3.defaultRateToNio
+        _exchangeRate2.value = rate2
+        _exchangeRate3.value = rate3
         
         // Refresh symbol according to current index
         val symbol = listOf(baseCordoba, c2, c3).getOrNull(_activeCurrencyIndex.value)?.symbol ?: baseCordoba.symbol
         _currencySymbol.value = symbol
+
+        appPrefs.edit()
+            .putString("exchange_rate_2", rate2.toString())
+            .putString("exchange_rate_3", rate3.toString())
+            .putString("currency_symbol", symbol)
+            .apply()
     }
 
     fun setAppTheme(theme: String) {
@@ -577,8 +597,14 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateExchangeRates(rate2: Double, rate3: Double) {
-        if (rate2 > 0) _exchangeRate2.value = rate2
-        if (rate3 > 0) _exchangeRate3.value = rate3
+        if (rate2 > 0) {
+            _exchangeRate2.value = rate2
+            appPrefs.edit().putString("exchange_rate_2", rate2.toString()).apply()
+        }
+        if (rate3 > 0) {
+            _exchangeRate3.value = rate3
+            appPrefs.edit().putString("exchange_rate_3", rate3.toString()).apply()
+        }
     }
 
     fun logoutUser() {
@@ -614,11 +640,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             _isGoogleDriveConnected.value = false
             _lastDriveSync.value = "Sesión cerrada"
 
-            // 4. Guardar preferencia para recordar que se cerró sesión
+            // 4. Guardar preferencia para recordar que se cerró sesión y resetear moneda principal a Córdobas
+            _activeCurrencyIndex.value = 0
+            _currencySymbol.value = "C$"
             appPrefs.edit()
                 .putBoolean("is_logged_in", false)
                 .putString("saved_email", "")
                 .putString("saved_name", "")
+                .putInt("active_currency_index", 0)
+                .putString("currency_symbol", "C$")
                 .apply()
 
             _isAiLoading.value = false
@@ -661,14 +691,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             // 1. Vincular cuenta a Firebase Firestore
             firebaseManager.updateUserAccount(cleanEmail)
 
-            // 2. Mandar a traer registros y PIN desde la nube
-            _importMessage.value = "Descargando todos tus registros desde la cuenta Gmail..."
+            // 2. Mandar a traer y sincronizar todos los registros y PIN desde la nube
+            _importMessage.value = "Sincronizando y respaldando registros con tu cuenta Gmail..."
             var cloudPinFound: String? = null
-            val count = repository.fetchAndRestoreAllFromCloud(cleanEmail) { cloudPin ->
+            val count = repository.syncBidirectional(cleanEmail) { cloudPin ->
                 cloudPinFound = cloudPin
                 securityManager?.setPinFromCloud(cloudPin)
             }
-            repository.syncBidirectional(cleanEmail)
 
             // Si el usuario suministró un PIN explícito al iniciar sesión, se graba en Firebase (pinuser)
             if (!securityPin.isNullOrBlank()) {
@@ -795,21 +824,31 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         timestamp: Long = System.currentTimeMillis(),
         attachmentUri: String? = null,
         dueDate: Long? = null,
-        schedulePaymentReminder: Boolean = false
+        schedulePaymentReminder: Boolean = false,
+        currency: String = "NIO"
     ) {
         viewModelScope.launch {
-            val baseAmount = convertToCordobas(amount)
+            val rate = if (currency == "USD") _exchangeRate2.value else 1.0
+            val baseAmount = if (currency == "USD") amount * rate else amount
+            val formattedNote = if (currency == "USD" && !note.contains("USD")) {
+                "[$amount USD] $note".trim()
+            } else {
+                note
+            }
             val newTx = TransactionEntity(
                 title = title,
                 amount = baseAmount,
                 category = category,
                 type = type,
-                note = note,
+                note = formattedNote,
                 isAiCategorized = isAi,
                 timestamp = timestamp,
                 attachmentUri = attachmentUri,
                 dueDate = dueDate,
-                hasReminderScheduled = schedulePaymentReminder
+                hasReminderScheduled = schedulePaymentReminder,
+                originalAmount = amount,
+                originalCurrency = currency,
+                exchangeRate = rate
             )
             repository.addTransaction(newTx)
 
@@ -823,7 +862,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     isPaid = false,
                     notifyReminder = true,
                     attachmentUri = attachmentUri,
-                    note = note
+                    note = formattedNote
                 )
                 val id = repository.addScheduledExpense(scheduled)
                 val scheduledWithId = scheduled.copy(id = id)
@@ -835,10 +874,46 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun editTransaction(
+        originalTransaction: TransactionEntity,
+        title: String,
+        amount: Double,
+        category: String,
+        type: String,
+        note: String = "",
+        timestamp: Long = originalTransaction.timestamp,
+        currency: String = "NIO"
+    ) {
+        viewModelScope.launch {
+            val rate = if (currency == "USD") _exchangeRate2.value else 1.0
+            val baseAmount = if (currency == "USD") amount * rate else amount
+            val formattedNote = if (currency == "USD") {
+                val usdTag = "[$amount USD]"
+                if (!note.contains("USD")) "$usdTag $note".trim() else note
+            } else {
+                note.replace(Regex("""\[\d+(\.\d+)? USD\]"""), "").trim()
+            }
+            val updated = originalTransaction.copy(
+                title = title.trim(),
+                amount = baseAmount,
+                originalAmount = amount,
+                originalCurrency = currency,
+                exchangeRate = rate,
+                category = category,
+                type = type,
+                note = formattedNote,
+                timestamp = timestamp
+            )
+            repository.updateTransaction(updated)
+            _importMessage.value = "✏️ Registro actualizado correctamente."
+            checkBudgetAlertsAndNotify(category, baseAmount, type)
+        }
+    }
 
     fun deleteTransaction(transaction: TransactionEntity) {
         viewModelScope.launch {
             repository.deleteTransaction(transaction)
+            _importMessage.value = "🗑️ Registro eliminado correctamente."
         }
     }
 
@@ -1038,15 +1113,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun testScheduledExpenseReminder(title: String = "Servicio de Luz", amount: Double = 45.0) {
-        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-        val dateStr = sdf.format(Date(System.currentTimeMillis() + 86400000L))
-        NotificationHelper.sendScheduledExpenseReminder(
+    fun testScheduledExpenseReminder(title: String = "Servicio de Luz", amount: Double = 45.0): Boolean {
+        val sent = NotificationHelper.sendTestNotification(
             context = getApplication(),
-            title = title,
-            amountFormatted = "${uiState.value.currencySymbol}${String.format(Locale.US, "%.2f", amount)}",
-            dueDateText = "mañana ($dateStr)"
+            currencySymbol = uiState.value.currencySymbol
         )
+        if (sent) {
+            _importMessage.value = "🔔 ¡Notificación de prueba enviada con éxito! Revisa la barra de notificaciones de tu teléfono."
+        } else {
+            _importMessage.value = "⚠️ No se pudo mostrar la notificación. Asegúrate de conceder el permiso de notificaciones en los Ajustes de la aplicación."
+        }
+        return sent
     }
 
     private fun isSameMonthAndYear(t1: Long, t2: Long): Boolean {

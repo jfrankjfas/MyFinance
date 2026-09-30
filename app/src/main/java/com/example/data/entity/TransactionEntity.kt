@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 data class TransactionEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
-    val amount: Double,
+    val amount: Double, // Base amount in primary currency (Córdobas NIO)
     val category: String,
     val type: String, // "EXPENSE" or "INCOME"
     val timestamp: Long = System.currentTimeMillis(),
@@ -15,5 +15,8 @@ data class TransactionEntity(
     val isAiCategorized: Boolean = false,
     val attachmentUri: String? = null,
     val dueDate: Long? = null,
-    val hasReminderScheduled: Boolean = false
+    val hasReminderScheduled: Boolean = false,
+    val originalAmount: Double = 0.0,
+    val originalCurrency: String = "NIO",
+    val exchangeRate: Double = 1.0
 )

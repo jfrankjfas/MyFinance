@@ -117,7 +117,8 @@ fun AddTransactionDialog(
         timestamp: Long,
         attachmentUri: String?,
         dueDate: Long?,
-        scheduleReminder: Boolean
+        scheduleReminder: Boolean,
+        currency: String
     ) -> Unit,
     onCategorizeRequested: (String, (AiCategorizedResult) -> Unit) -> Unit,
     onConfirmAddTransaction: (AiCategorizedResult) -> Unit,
@@ -144,7 +145,7 @@ fun AddTransactionDialog(
     var detectedDueDateMs by remember { mutableStateOf<Long?>(null) }
     var isScheduleReminderChecked by remember { mutableStateOf(false) }
     var showFullImageViewer by remember { mutableStateOf(false) }
-    var transactionCurrency by remember { mutableStateOf(if (activeCurrencyIndex == 1) "USD" else "NIO") }
+    var transactionCurrency by remember { mutableStateOf("NIO") }
     var scanSuccessMessage by remember { mutableStateOf<String?>(null) }
 
     // Android Photo Picker (zero-permission Google Play compliant)
@@ -700,28 +701,18 @@ fun AddTransactionDialog(
                         onClick = {
                             val cleanAmount = amountInput.replace(',', '.').trim()
                             val rawAmount = cleanAmount.toDoubleOrNull() ?: 0.0
-                            val finalBaseAmount = if (transactionCurrency == "USD") {
-                                rawAmount * exchangeRate2
-                            } else {
-                                rawAmount
-                            }
-                            val finalNote = if (transactionCurrency == "USD") {
-                                val usdPrefix = "[$rawAmount USD]"
-                                if (noteInput.isNotBlank()) "$usdPrefix $noteInput" else usdPrefix
-                            } else {
-                                noteInput.trim()
-                            }
-                            if (titleInput.isNotBlank() && finalBaseAmount > 0) {
+                            if (titleInput.isNotBlank() && rawAmount > 0) {
                                 onAddManual(
                                     titleInput.trim(),
-                                    finalBaseAmount,
+                                    rawAmount,
                                     selectedCategory,
                                     selectedType,
-                                    finalNote,
+                                    noteInput.trim(),
                                     selectedDateMs,
                                     attachedImageUri,
                                     if (isScheduleReminderChecked) detectedDueDateMs else null,
-                                    isScheduleReminderChecked
+                                    isScheduleReminderChecked,
+                                    transactionCurrency
                                 )
                                 onDismiss()
                             }

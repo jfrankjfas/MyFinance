@@ -212,7 +212,7 @@ class FinanceRepository(
         return totalRemote
     }
 
-    suspend fun syncBidirectional(email: String): Int {
+    suspend fun syncBidirectional(email: String, onPinRestored: ((String) -> Unit)? = null): Int {
         val manager = firebaseManager ?: return 0
         val txs = allTransactions.first()
         val bgs = allBudgets.first()
@@ -221,6 +221,9 @@ class FinanceRepository(
         val arch = allArchivedPeriods.first()
 
         val snapshot = manager.syncAllBidirectional(email, txs, bgs, sched, funds, arch)
+        if (!snapshot.userPin.isNullOrBlank()) {
+            onPinRestored?.invoke(snapshot.userPin)
+        }
         if (snapshot.transactions.isNotEmpty()) {
             transactionDao.insertAll(snapshot.transactions)
         }
@@ -280,8 +283,15 @@ class FinanceRepository(
     suspend fun exportDataToJson(): String {
         val transactions = allTransactions.first()
         val budgets = allBudgets.first()
+        val scheduled = allScheduledExpenses.first()
+        val funds = allExtraordinaryFunds.first()
+        val archived = allArchivedPeriods.first()
 
-        val jsonRoot = JSONObject()
+        val jsonRoot = JSONObject().apply {
+            put("app", "FinanzasClara")
+            put("version", 2)
+            put("exportedAt", System.currentTimeMillis())
+        }
 
         val txArray = JSONArray()
         transactions.forEach { tx ->
@@ -294,6 +304,12 @@ class FinanceRepository(
                 put("timestamp", tx.timestamp)
                 put("note", tx.note)
                 put("isAiCategorized", tx.isAiCategorized)
+                put("attachmentUri", tx.attachmentUri ?: "")
+                put("dueDate", tx.dueDate ?: 0L)
+                put("hasReminderScheduled", tx.hasReminderScheduled)
+                put("originalAmount", tx.originalAmount)
+                put("originalCurrency", tx.originalCurrency)
+                put("exchangeRate", tx.exchangeRate)
             }
             txArray.put(obj)
         }
@@ -308,11 +324,64 @@ class FinanceRepository(
             budgetArray.put(obj)
         }
 
+        val scheduledArray = JSONArray()
+        scheduled.forEach { s ->
+            val obj = JSONObject().apply {
+                put("id", s.id)
+                put("title", s.title)
+                put("amount", s.amount)
+                put("category", s.category)
+                put("dueDate", s.dueDate)
+                put("isPaid", s.isPaid)
+                put("notifyReminder", s.notifyReminder)
+                put("attachmentUri", s.attachmentUri ?: "")
+                put("note", s.note)
+                put("isEmergencyPriority", s.isEmergencyPriority)
+            }
+            scheduledArray.put(obj)
+        }
+
+        val fundArray = JSONArray()
+        funds.forEach { f ->
+            val obj = JSONObject().apply {
+                put("id", f.id)
+                put("title", f.title)
+                put("totalAmount", f.totalAmount)
+                put("note", f.note)
+                put("allocationsJson", f.allocationsJson)
+                put("createdAt", f.createdAt)
+                put("currencySymbol", f.currencySymbol)
+            }
+            fundArray.put(obj)
+        }
+
+        val archivedArray = JSONArray()
+        archived.forEach { ap ->
+            val obj = JSONObject().apply {
+                put("id", ap.id)
+                put("title", ap.title)
+                put("periodMode", ap.periodMode)
+                put("archivedAt", ap.archivedAt)
+                put("budgetLimit", ap.budgetLimit)
+                put("totalSpent", ap.totalSpent)
+                put("totalScheduled", ap.totalScheduled)
+                put("currencySymbol", ap.currencySymbol)
+                put("note", ap.note)
+                put("transactionsJson", ap.transactionsJson)
+                put("scheduledJson", ap.scheduledJson)
+                put("isClosed", ap.isClosed)
+            }
+            archivedArray.put(obj)
+        }
+
         jsonRoot.put("app", "FinanzasClara")
-        jsonRoot.put("version", "1.0")
+        jsonRoot.put("version", "1.1")
         jsonRoot.put("exportDate", System.currentTimeMillis())
         jsonRoot.put("transactions", txArray)
         jsonRoot.put("budgets", budgetArray)
+        jsonRoot.put("scheduledExpenses", scheduledArray)
+        jsonRoot.put("extraordinaryFunds", fundArray)
+        jsonRoot.put("archivedPeriods", archivedArray)
 
         return jsonRoot.toString(2)
     }
@@ -322,7 +391,7 @@ class FinanceRepository(
             val jsonRoot = JSONObject(jsonString)
             if (jsonRoot.optString("app") != "FinanzasClara") return false
 
-            val txArray = jsonRoot.getJSONArray("transactions")
+            val txArray = jsonRoot.optJSONArray("transactions") ?: JSONArray()
             val newTransactions = mutableListOf<TransactionEntity>()
             for (i in 0 until txArray.length()) {
                 val obj = txArray.getJSONObject(i)
@@ -332,14 +401,20 @@ class FinanceRepository(
                         amount = obj.getDouble("amount"),
                         category = obj.getString("category"),
                         type = obj.getString("type"),
-                        timestamp = obj.getLong("timestamp"),
+                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
                         note = obj.optString("note", ""),
-                        isAiCategorized = obj.optBoolean("isAiCategorized", false)
+                        isAiCategorized = obj.optBoolean("isAiCategorized", false),
+                        attachmentUri = obj.optString("attachmentUri").takeIf { it.isNotBlank() },
+                        dueDate = obj.optLong("dueDate").takeIf { it > 0 },
+                        hasReminderScheduled = obj.optBoolean("hasReminderScheduled", false),
+                        originalAmount = obj.optDouble("originalAmount", obj.getDouble("amount")),
+                        originalCurrency = obj.optString("originalCurrency", if (obj.optString("note", "").contains("USD")) "USD" else "NIO"),
+                        exchangeRate = obj.optDouble("exchangeRate", 1.0)
                     )
                 )
             }
 
-            val budgetArray = jsonRoot.getJSONArray("budgets")
+            val budgetArray = jsonRoot.optJSONArray("budgets") ?: JSONArray()
             val newBudgets = mutableListOf<BudgetEntity>()
             for (i in 0 until budgetArray.length()) {
                 val obj = budgetArray.getJSONObject(i)
@@ -352,15 +427,78 @@ class FinanceRepository(
                 )
             }
 
-            transactionDao.deleteAll()
-            budgetDao.deleteAll()
+            val scheduledArray = jsonRoot.optJSONArray("scheduledExpenses")
+            val newScheduled = mutableListOf<ScheduledExpenseEntity>()
+            if (scheduledArray != null) {
+                for (i in 0 until scheduledArray.length()) {
+                    val obj = scheduledArray.getJSONObject(i)
+                    newScheduled.add(
+                        ScheduledExpenseEntity(
+                            title = obj.getString("title"),
+                            amount = obj.getDouble("amount"),
+                            category = obj.getString("category"),
+                            dueDate = obj.getLong("dueDate"),
+                            isPaid = obj.optBoolean("isPaid", false),
+                            notifyReminder = obj.optBoolean("notifyReminder", true),
+                            attachmentUri = obj.optString("attachmentUri").takeIf { it.isNotBlank() },
+                            note = obj.optString("note", ""),
+                            isEmergencyPriority = obj.optBoolean("isEmergencyPriority", false)
+                        )
+                    )
+                }
+            }
 
-            transactionDao.insertAll(newTransactions)
-            budgetDao.insertAll(newBudgets)
+            val fundArray = jsonRoot.optJSONArray("extraordinaryFunds")
+            val newFunds = mutableListOf<ExtraordinaryFundEntity>()
+            if (fundArray != null) {
+                for (i in 0 until fundArray.length()) {
+                    val obj = fundArray.getJSONObject(i)
+                    newFunds.add(
+                        ExtraordinaryFundEntity(
+                            title = obj.getString("title"),
+                            totalAmount = obj.getDouble("totalAmount"),
+                            note = obj.optString("note", ""),
+                            allocationsJson = obj.optString("allocationsJson", "[]"),
+                            createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                            currencySymbol = obj.optString("currencySymbol", "C$")
+                        )
+                    )
+                }
+            }
+
+            val archivedArray = jsonRoot.optJSONArray("archivedPeriods")
+            val newArchived = mutableListOf<ArchivedPeriodEntity>()
+            if (archivedArray != null) {
+                for (i in 0 until archivedArray.length()) {
+                    val obj = archivedArray.getJSONObject(i)
+                    newArchived.add(
+                        ArchivedPeriodEntity(
+                            title = obj.getString("title"),
+                            periodMode = obj.optString("periodMode", "MONTHLY"),
+                            archivedAt = obj.optLong("archivedAt", System.currentTimeMillis()),
+                            budgetLimit = obj.optDouble("budgetLimit", 0.0),
+                            totalSpent = obj.optDouble("totalSpent", 0.0),
+                            totalScheduled = obj.optDouble("totalScheduled", 0.0),
+                            currencySymbol = obj.optString("currencySymbol", "C$"),
+                            note = obj.optString("note", ""),
+                            transactionsJson = obj.optString("transactionsJson", "[]"),
+                            scheduledJson = obj.optString("scheduledJson", "[]"),
+                            isClosed = obj.optBoolean("isClosed", true)
+                        )
+                    )
+                }
+            }
+
+            clearLocalDataOnly()
+
+            if (newTransactions.isNotEmpty()) transactionDao.insertAll(newTransactions)
+            if (newBudgets.isNotEmpty()) budgetDao.insertAll(newBudgets)
+            newScheduled.forEach { scheduledExpenseDao.insertScheduledExpense(it) }
+            newFunds.forEach { extraordinaryFundDao.insertFund(it) }
+            newArchived.forEach { archivedPeriodDao.insertArchivedPeriod(it) }
 
             // Push imported data to Firebase
-            newTransactions.forEach { firebaseManager?.saveTransactionToCloud(it) }
-            newBudgets.forEach { firebaseManager?.saveBudgetToCloud(it) }
+            firebaseManager?.syncAllLocalToCloud(newTransactions, newBudgets, newScheduled, newFunds, newArchived)
             true
         } catch (e: Exception) {
             e.printStackTrace()

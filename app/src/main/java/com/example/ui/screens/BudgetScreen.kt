@@ -55,6 +55,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -142,10 +143,19 @@ fun BudgetScreen(
     var showArchivedStatementsList by remember { mutableStateOf(false) }
     var selectedArchivedStatement by remember { mutableStateOf<ArchivedPeriodEntity?>(null) }
 
-    var generalLimitInput by remember(uiState.budgets) {
+    val context = LocalContext.current
+    val activeSymbol = uiState.currencySymbol
+    val exchangeRate = uiState.exchangeRate2
+    var generalLimitInput by remember(uiState.budgets, activeSymbol) {
         val general = uiState.budgets.find { it.category == "GENERAL" }
-        mutableStateOf(general?.limitAmount?.toString() ?: "1200")
+        val rawLimit = general?.limitAmount ?: 0.0
+        val displayLimit = if (activeSymbol == "$" && exchangeRate > 0) (rawLimit / exchangeRate) else rawLimit
+        mutableStateOf(if (displayLimit > 0) String.format(Locale.US, "%.2f", displayLimit) else "")
     }
+
+    var showCategoryBudgetDialog by remember { mutableStateOf(false) }
+    var selectedCatForBudget by remember { mutableStateOf("Alimentación") }
+    var catLimitInput by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = modifier
@@ -298,7 +308,7 @@ fun BudgetScreen(
             }
         }
 
-        // Period Financial Summary Card
+        // Period Financial Summary & Budget Analysis Card
         item {
             val periodLabel = when (uiState.budgetPeriodMode) {
                 "FORTNIGHT_1" -> "1ª Quincena (Días 1-15)"
@@ -306,84 +316,187 @@ fun BudgetScreen(
                 else -> "Mes Completo"
             }
 
-            val remaining = (uiState.periodBudgetLimitTotal - uiState.periodSpentTotal - uiState.periodPendingExpensesTotal).coerceAtLeast(0.0)
+            val totalCommitted = uiState.periodSpentTotal + uiState.periodPendingExpensesTotal
+            val rawRemaining = uiState.periodBudgetLimitTotal - totalCommitted
+            val executionPercent = if (uiState.periodBudgetLimitTotal > 0) {
+                ((totalCommitted / uiState.periodBudgetLimitTotal) * 100).toInt()
+            } else 0
+
+            val cal = Calendar.getInstance()
+            val curDay = cal.get(Calendar.DAY_OF_MONTH)
+            val maxDaysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+            val (pStart, pEnd) = when (uiState.budgetPeriodMode) {
+                "FORTNIGHT_1" -> Pair(1, 15)
+                "FORTNIGHT_2" -> Pair(16, maxDaysInMonth)
+                else -> Pair(1, maxDaysInMonth)
+            }
+            val totalDays = (pEnd - pStart + 1).coerceAtLeast(1)
+            val elapsedDays = (curDay - pStart + 1).coerceIn(1, totalDays)
+            val remainingDays = (pEnd - curDay).coerceAtLeast(0)
+            val dailyBurn = if (elapsedDays > 0) uiState.periodSpentTotal / elapsedDays else 0.0
+            val dailyTarget = if (remainingDays > 0 && rawRemaining > 0) rawRemaining / remainingDays else 0.0
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                )
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Resumen del Periodo",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(PrimaryEmerald.copy(alpha = 0.15f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        Column {
+                            Text(
+                                text = "📊 Análisis de Presupuesto",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Ejecución $periodLabel",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        val badgeColor = when {
+                            executionPercent >= 100 -> ExpenseRed
+                            executionPercent >= 80 -> WarningAmber
+                            else -> IncomeGreen
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = badgeColor.copy(alpha = 0.15f)
                         ) {
                             Text(
-                                text = periodLabel,
+                                text = if (executionPercent >= 100) "$executionPercent% Excedido" else "$executionPercent% Consumido",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = PrimaryEmerald
+                                color = badgeColor,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Progress bar
+                    LinearProgressIndicator(
+                        progress = (executionPercent / 100f).coerceIn(0f, 1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(10.dp)
+                            .clip(RoundedCornerShape(5.dp)),
+                        color = when {
+                            executionPercent >= 100 -> ExpenseRed
+                            executionPercent >= 80 -> WarningAmber
+                            else -> PrimaryEmerald
+                        },
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text("Límite Periodo", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Asignado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
                                 text = "${uiState.currencySymbol}${String.format("%.2f", uiState.periodBudgetLimitTotal)}",
-                                style = MaterialTheme.typography.titleSmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
                         Column {
-                            Text("Gastado Real", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Gastado Real", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
                                 text = "${uiState.currencySymbol}${String.format("%.2f", uiState.periodSpentTotal)}",
-                                style = MaterialTheme.typography.titleSmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = ExpenseRed
                             )
                         }
 
                         Column {
-                            Text("Pendiente", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Comprometido", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
                                 text = "${uiState.currencySymbol}${String.format("%.2f", uiState.periodPendingExpensesTotal)}",
-                                style = MaterialTheme.typography.titleSmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = WarningAmber
                             )
                         }
 
                         Column {
-                            Text("Disponible", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (rawRemaining >= 0) "Disponible" else "Déficit", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                text = "${uiState.currencySymbol}${String.format("%.2f", remaining)}",
-                                style = MaterialTheme.typography.titleSmall,
+                                text = "${if (rawRemaining >= 0) "+" else "-"}${uiState.currencySymbol}${String.format("%.2f", kotlin.math.abs(rawRemaining))}",
+                                style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = IncomeGreen
+                                color = if (rawRemaining >= 0) IncomeGreen else ExpenseRed
                             )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Daily pacing pill
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Día $elapsedDays/$totalDays • Gasto promedio: ${uiState.currencySymbol}${String.format("%.2f", dailyBurn)}/día • Margen sugerido: ${uiState.currencySymbol}${String.format("%.2f", dailyTarget)}/día",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Action buttons to Save EC / View Historical EC
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { showArchiveConfirmDialog = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Guardar EC", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = { showArchivedStatementsList = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.ReceiptLong, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Ver EC (${uiState.archivedPeriods.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -479,23 +592,34 @@ fun BudgetScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = "Configurar Presupuesto Base Mensual",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Si utilizas modo Quincena, se dividirá automáticamente en 2 partes iguales.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Configurar Presupuesto Mensual",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Para Quincenas se divide automáticamente en 2 partes iguales.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = onTestNotification) {
+                            Icon(Icons.Default.NotificationsActive, contentDescription = "Probar Notificación", tint = WarningAmber)
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
                     OutlinedTextField(
                         value = generalLimitInput,
                         onValueChange = { generalLimitInput = it },
-                        label = { Text("Límite Mensual Total (${uiState.currencySymbol})") },
+                        label = { Text("Límite Mensual General (${uiState.currencySymbol})") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -505,25 +629,31 @@ fun BudgetScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
-                            onClick = onTestNotification,
+                            onClick = {
+                                catLimitInput = ""
+                                showCategoryBudgetDialog = true
+                            },
+                            modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Probar Notif.", fontSize = 12.sp)
+                            Text("+ Categoría", fontSize = 12.sp)
                         }
 
                         Button(
                             onClick = {
-                                val limit = generalLimitInput.toDoubleOrNull() ?: 0.0
-                                if (limit > 0) {
-                                    onSaveBudgetLimit("GENERAL", limit, 80)
+                                val parsed = generalLimitInput.replace(',', '.').trim().toDoubleOrNull() ?: 0.0
+                                if (parsed > 0) {
+                                    val baseNio = if (uiState.currencySymbol == "$" && uiState.exchangeRate2 > 0) parsed * uiState.exchangeRate2 else parsed
+                                    onSaveBudgetLimit("GENERAL", baseNio, 80)
+                                    android.widget.Toast.makeText(context, "🎯 Presupuesto general guardado: ${uiState.currencySymbol}${String.format(Locale.US, "%.2f", parsed)}", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             },
+                            modifier = Modifier.weight(1.2f),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald)
                         ) {
@@ -587,6 +717,89 @@ fun BudgetScreen(
             onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note ->
                 onAddScheduledExpense(title, amount, category, dueDate, notify, attachmentUri, note)
                 showAddScheduledDialog = false
+            }
+        )
+    }
+
+    // Category Budget Dialog
+    if (showCategoryBudgetDialog) {
+        var catExpanded by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showCategoryBudgetDialog = false },
+            title = {
+                Text("Presupuesto por Categoría", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Asigna un límite mensual a una categoría específica (ej. Alimentación, Servicios, etc.):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    ExposedDropdownMenuBox(
+                        expanded = catExpanded,
+                        onExpandedChange = { catExpanded = !catExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedCatForBudget,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Categoría") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = catExpanded,
+                            onDismissRequest = { catExpanded = false }
+                        ) {
+                            categoryList.filter { it != "Varios" }.forEach { cat ->
+                                DropdownMenuItem(
+                                    text = { Text(cat) },
+                                    onClick = {
+                                        selectedCatForBudget = cat
+                                        catExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = catLimitInput,
+                        onValueChange = { catLimitInput = it },
+                        label = { Text("Límite Mensual (${uiState.currencySymbol})") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val parsed = catLimitInput.replace(',', '.').trim().toDoubleOrNull() ?: 0.0
+                        if (parsed > 0) {
+                            val baseNio = if (uiState.currencySymbol == "$" && uiState.exchangeRate2 > 0) parsed * uiState.exchangeRate2 else parsed
+                            onSaveBudgetLimit(selectedCatForBudget, baseNio, 80)
+                            android.widget.Toast.makeText(context, "🎯 Presupuesto de $selectedCatForBudget guardado", android.widget.Toast.LENGTH_SHORT).show()
+                            showCategoryBudgetDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCategoryBudgetDialog = false }) {
+                    Text("Cancelar")
+                }
             }
         )
     }

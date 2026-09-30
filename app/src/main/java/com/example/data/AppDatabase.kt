@@ -17,7 +17,7 @@ import com.example.data.entity.TransactionEntity
 
 @Database(
     entities = [TransactionEntity::class, BudgetEntity::class, ScheduledExpenseEntity::class, ArchivedPeriodEntity::class, ExtraordinaryFundEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

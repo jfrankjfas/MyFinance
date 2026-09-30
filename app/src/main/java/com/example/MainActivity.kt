@@ -1,9 +1,15 @@
 package com.example
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +38,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -134,6 +142,26 @@ fun MainAppScreen(
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var showProfileScreen by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            Toast.makeText(context, "🔔 Permiso de notificaciones concedido", Toast.LENGTH_SHORT).show()
+            viewModel.testScheduledExpenseReminder()
+        } else {
+            Toast.makeText(context, "⚠️ Permiso denegado. Habilítalo en Ajustes para recibir recordatorios.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -180,6 +208,18 @@ fun MainAppScreen(
                         uiState = uiState,
                         onAddTransactionClicked = { showAddDialog = true },
                         onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                        onEditTransaction = { tx, title, amount, category, type, note, timestamp, currency ->
+                            viewModel.editTransaction(
+                                originalTransaction = tx,
+                                title = title,
+                                amount = amount,
+                                category = category,
+                                type = type,
+                                note = note,
+                                timestamp = timestamp,
+                                currency = currency
+                            )
+                        },
                         onCurrencySelected = { viewModel.setCurrency(it) },
                         onCurrencyIndexSelected = { viewModel.setActiveCurrencyIndex(it) },
                         onProfileClick = { showProfileScreen = true },
@@ -191,6 +231,7 @@ fun MainAppScreen(
                 NavTab.ANALYTICS -> {
                     AnalyticsScreen(
                         uiState = uiState,
+                        onSetBudgetPeriodMode = { viewModel.setBudgetPeriodMode(it) },
                         modifier = modifier
                     )
                 }
@@ -252,7 +293,17 @@ fun MainAppScreen(
                             viewModel.deleteAllocationFromExtraordinaryFund(fundId, allocId)
                         },
                         onTestNotification = {
-                            viewModel.testScheduledExpenseReminder()
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                val ok = viewModel.testScheduledExpenseReminder()
+                                if (ok) {
+                                    Toast.makeText(context, "🔔 ¡Notificación de prueba enviada! Revisa la barra superior de tu teléfono.", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "⚠️ Concede el permiso de notificaciones en los Ajustes del sistema.", Toast.LENGTH_LONG).show()
+                                }
+                            }
                         },
                         modifier = modifier
                     )
@@ -288,7 +339,7 @@ fun MainAppScreen(
                 isAiLoading = isAiLoading,
                 aiErrorMessage = aiErrorMessage,
                 onDismiss = { showAddDialog = false },
-                onAddManual = { title, amount, category, type, note, timestamp, attachmentUri, dueDate, scheduleReminder ->
+                onAddManual = { title, amount, category, type, note, timestamp, attachmentUri, dueDate, scheduleReminder, currency ->
                     viewModel.addTransaction(
                         title = title,
                         amount = amount,
@@ -299,30 +350,22 @@ fun MainAppScreen(
                         timestamp = timestamp,
                         attachmentUri = attachmentUri,
                         dueDate = dueDate,
-                        schedulePaymentReminder = scheduleReminder
+                        schedulePaymentReminder = scheduleReminder,
+                        currency = currency
                     )
                 },
                 onCategorizeRequested = { prompt, onResult ->
                     viewModel.processAiInput(prompt, onResult)
                 },
                 onConfirmAddTransaction = { res ->
-                    val finalAmount = if (res.currency == "USD") {
-                        res.amount * uiState.exchangeRate2
-                    } else {
-                        res.amount
-                    }
-                    val finalNote = if (res.currency == "USD") {
-                        "[${res.amount} USD] ${res.note}"
-                    } else {
-                        res.note
-                    }
                     viewModel.addTransaction(
                         title = res.title,
-                        amount = finalAmount,
+                        amount = res.amount,
                         category = res.category,
                         type = res.type,
-                        note = finalNote,
-                        isAi = true
+                        note = res.note,
+                        isAi = true,
+                        currency = res.currency
                     )
                 },
                 onClearAiError = {
