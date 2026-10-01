@@ -83,9 +83,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import com.example.ui.components.TopCurrencyHeader
 import com.example.ui.theme.SleekPrimary
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     uiState: FinanceUiState,
@@ -97,6 +100,7 @@ fun HomeScreen(
     onProfileClick: () -> Unit = {},
     onGoToScheduledPayments: () -> Unit = {},
     onResetToZero: () -> Unit = {},
+    onRefresh: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -112,13 +116,20 @@ fun HomeScreen(
                 tx.note.contains(searchQuery, ignoreCase = true)
     }
 
+    val isRefreshing = uiState.isAiLoading || uiState.firebaseSyncStatus.isSyncing
+
     Box(modifier = modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize()
         ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
 
             // Top Header with Gmail account profile and 3 Currency Parameter Switcher
@@ -387,6 +398,7 @@ fun HomeScreen(
             }
 
             item { Spacer(modifier = Modifier.height(80.dp)) }
+        }
         }
 
         // FAB to add new transaction

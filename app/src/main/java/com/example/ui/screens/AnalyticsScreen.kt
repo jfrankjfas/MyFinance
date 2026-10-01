@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -54,10 +56,12 @@ import com.example.ui.theme.SleekPrimary
 import com.example.ui.theme.WarningAmber
 import java.util.Calendar
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnalyticsScreen(
     uiState: FinanceUiState,
     onSetBudgetPeriodMode: ((String) -> Unit)? = null,
+    onRefresh: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedPeriodMode by remember(uiState.budgetPeriodMode) { mutableStateOf(uiState.budgetPeriodMode) }
@@ -136,12 +140,19 @@ fun AnalyticsScreen(
         else -> "Mes Completo"
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    val isRefreshing = uiState.isAiLoading || uiState.firebaseSyncStatus.isSyncing
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = modifier.fillMaxSize()
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         item { Spacer(modifier = Modifier.height(8.dp)) }
 
         // Title
@@ -482,6 +493,7 @@ fun AnalyticsScreen(
         }
 
         item { Spacer(modifier = Modifier.height(30.dp)) }
+    }
     }
 }
 

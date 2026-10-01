@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -365,6 +366,30 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             s.copy(amount = s.amount * multiplier)
         }
 
+        // Converted extraordinary funds list with amounts matching the active currency (C$ or USD)
+        val convertedExtraFunds = extraFundsList.map { fund ->
+            val convertedAllocationsJson = try {
+                val arr = JSONArray(fund.allocationsJson)
+                val newArr = JSONArray()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val copyObj = JSONObject(obj.toString())
+                    val rawAmt = obj.optDouble("amount", 0.0)
+                    copyObj.put("amount", rawAmt * multiplier)
+                    newArr.put(copyObj)
+                }
+                newArr.toString()
+            } catch (e: Exception) {
+                fund.allocationsJson
+            }
+
+            fund.copy(
+                totalAmount = fund.totalAmount * multiplier,
+                currencySymbol = currConfig.symbol,
+                allocationsJson = convertedAllocationsJson
+            )
+        }
+
         val catExpensesList = if (activeExpense > 0) {
             rawCategoryMap.map { (cat, amt) ->
                 val convertedAmt = amt * multiplier
@@ -445,7 +470,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             scheduledExpenses = convertedScheduled,
             periodScheduledExpenses = convertedPeriodScheduled,
             archivedPeriods = archivedPeriodsList,
-            extraordinaryFunds = extraFundsList,
+            extraordinaryFunds = convertedExtraFunds,
             budgetPeriodMode = periodMode,
             periodPendingExpensesTotal = periodPendingActiveTotal,
             periodSpentTotal = periodActiveExpense,
@@ -507,7 +532,6 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 }
             } else {
                 firebaseManager.disconnectUser()
-                repository.clearLocalDataOnly()
             }
             checkUpcomingPaymentAlerts()
         }
@@ -657,8 +681,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             // 1. Desconectar listeners de Firebase
             firebaseManager.disconnectUser()
 
-            // 2. Quitar todos los registros de la app (Room SQLite queda limpio por seguridad y privacidad)
-            repository.clearLocalDataOnly()
+            // 2. Preservar registros locales en el dispositivo (NO borrar datos por seguridad)
+            // repository.clearLocalDataOnly() eliminado para evitar pérdida accidental de datos
 
             // 3. Actualizar estado en memoria
             _userEmail.value = ""
@@ -1376,7 +1400,23 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateExtraordinaryFund(fund: com.example.data.entity.ExtraordinaryFundEntity) {
         viewModelScope.launch {
-            repository.updateExtraordinaryFund(fund)
+            val baseAmount = convertToCordobas(fund.totalAmount)
+            val allFunds = repository.allExtraordinaryFunds.first()
+            val existing = allFunds.find { it.id == fund.id }
+            val updated = if (existing != null) {
+                existing.copy(
+                    title = fund.title,
+                    totalAmount = baseAmount,
+                    currencySymbol = "C$",
+                    note = fund.note
+                )
+            } else {
+                fund.copy(
+                    totalAmount = baseAmount,
+                    currencySymbol = "C$"
+                )
+            }
+            repository.updateExtraordinaryFund(updated)
             _importMessage.value = "✏️ Ingreso Extraordinario actualizado."
         }
     }
@@ -1390,7 +1430,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun addAllocationToExtraordinaryFund(fundId: Long, allocationTitle: String, amount: Double, category: String, note: String) {
         viewModelScope.launch {
-            val fund = uiState.value.extraordinaryFunds.find { it.id == fundId } ?: return@launch
+            val allFunds = repository.allExtraordinaryFunds.first()
+            val fund = allFunds.find { it.id == fundId } ?: return@launch
             val jsonArray = try { JSONArray(fund.allocationsJson) } catch (e: Exception) { JSONArray() }
             val baseAmount = convertToCordobas(amount)
 
@@ -1412,14 +1453,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun editAllocationInExtraordinaryFund(fundId: Long, allocationId: String, title: String, amount: Double, category: String, note: String) {
         viewModelScope.launch {
-            val fund = uiState.value.extraordinaryFunds.find { it.id == fundId } ?: return@launch
+            val allFunds = repository.allExtraordinaryFunds.first()
+            val fund = allFunds.find { it.id == fundId } ?: return@launch
             val jsonArray = try { JSONArray(fund.allocationsJson) } catch (e: Exception) { JSONArray() }
+            val baseAmount = convertToCordobas(amount)
 
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 if (obj.optString("id") == allocationId) {
                     obj.put("title", title)
-                    obj.put("amount", amount)
+                    obj.put("amount", baseAmount)
                     obj.put("category", category)
                     obj.put("note", note)
                     break
@@ -1434,7 +1477,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteAllocationFromExtraordinaryFund(fundId: Long, allocationId: String) {
         viewModelScope.launch {
-            val fund = uiState.value.extraordinaryFunds.find { it.id == fundId } ?: return@launch
+            val allFunds = repository.allExtraordinaryFunds.first()
+            val fund = allFunds.find { it.id == fundId } ?: return@launch
             val jsonArray = try { JSONArray(fund.allocationsJson) } catch (e: Exception) { JSONArray() }
 
             val newArray = JSONArray()

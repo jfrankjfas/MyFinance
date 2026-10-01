@@ -163,6 +163,15 @@ fun MainAppScreen(
         }
     }
 
+    LaunchedEffect(uiState.importMessage) {
+        uiState.importMessage?.let { msg ->
+            if (msg.isNotBlank()) {
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                viewModel.clearImportMessage()
+            }
+        }
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
@@ -225,6 +234,7 @@ fun MainAppScreen(
                         onProfileClick = { showProfileScreen = true },
                         onGoToScheduledPayments = { selectedTabIndex = 2 },
                         onResetToZero = { viewModel.clearAllDataToZero() },
+                        onRefresh = { viewModel.syncToFirebase() },
                         modifier = modifier
                     )
                 }
@@ -232,6 +242,7 @@ fun MainAppScreen(
                     AnalyticsScreen(
                         uiState = uiState,
                         onSetBudgetPeriodMode = { viewModel.setBudgetPeriodMode(it) },
+                        onRefresh = { viewModel.syncToFirebase() },
                         modifier = modifier
                     )
                 }
@@ -305,6 +316,7 @@ fun MainAppScreen(
                                 }
                             }
                         },
+                        onRefresh = { viewModel.syncToFirebase() },
                         modifier = modifier
                     )
                 }

@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,7 +80,7 @@ import com.example.ui.theme.SleekPrimaryContainer
 import com.example.ui.theme.WarningAmber
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun BackupScreen(
     uiState: FinanceUiState,
@@ -121,12 +123,19 @@ fun BackupScreen(
     var showDropdown3 by remember { mutableStateOf(false) }
 
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    val isRefreshing = uiState.isAiLoading || uiState.firebaseSyncStatus.isSyncing
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { onSyncFirebase() },
+        modifier = modifier.fillMaxSize()
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         item { Spacer(modifier = Modifier.height(8.dp)) }
 
         item {
@@ -307,6 +316,45 @@ fun BackupScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (fbStatus.isConnected) PrimaryEmerald else MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+
+                    if (fbStatus.syncStatusText.contains("Firestore", ignoreCase = true) || fbStatus.syncStatusText.contains("no creada", ignoreCase = true)) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = WarningAmber.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, WarningAmber.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "ℹ️ Activar Base de Datos Firestore en la Nube",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Tu proyecto Firebase (gen-lang-client-0358975709) aún no tiene creada la base de datos Firestore (default). Al crearla en Firebase Console (Modo de prueba), tus registros se guardarán en la nube permanentemente.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 15.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse("https://console.firebase.google.com/project/gen-lang-client-0358975709/firestore")
+                                        )
+                                        context.startActivity(intent)
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Abrir Firebase Console para Crear Firestore", fontSize = 11.sp)
+                                }
+                            }
                         }
                     }
 
@@ -588,6 +636,7 @@ fun BackupScreen(
         }
 
         item { Spacer(modifier = Modifier.height(30.dp)) }
+    }
     }
 
     // Modal Dialog: Exportar CSV

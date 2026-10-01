@@ -721,6 +721,18 @@ class FirebaseFinanceManager(
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "Transaction listen error: ${error.message}")
+                    val msg = if (error.message?.contains("does not exist", ignoreCase = true) == true ||
+                        error.message?.contains("NOT_FOUND", ignoreCase = true) == true) {
+                        "⚠️ Base de datos Firestore no creada en Firebase Console"
+                    } else if (error.message?.contains("PERMISSION_DENIED", ignoreCase = true) == true) {
+                        "⚠️ Permisos pendientes en reglas de Firestore"
+                    } else {
+                        "Modo Local (Firebase: ${error.code})"
+                    }
+                    _syncStatus.value = _syncStatus.value.copy(
+                        isConnected = false,
+                        syncStatusText = msg
+                    )
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {

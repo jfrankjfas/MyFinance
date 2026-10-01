@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -136,6 +137,7 @@ fun BudgetScreen(
     onEditAllocationInExtraordinaryFund: (fundId: Long, allocationId: String, title: String, amount: Double, category: String, note: String) -> Unit = { _, _, _, _, _, _ -> },
     onDeleteAllocationFromExtraordinaryFund: (fundId: Long, allocationId: String) -> Unit = { _, _ -> },
     onTestNotification: () -> Unit,
+    onRefresh: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showAddScheduledDialog by remember { mutableStateOf(false) }
@@ -157,12 +159,19 @@ fun BudgetScreen(
     var selectedCatForBudget by remember { mutableStateOf("Alimentación") }
     var catLimitInput by remember { mutableStateOf("") }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    val isRefreshing = uiState.isAiLoading || uiState.firebaseSyncStatus.isSyncing
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = modifier.fillMaxSize()
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         item { Spacer(modifier = Modifier.height(8.dp)) }
 
         // Screen Header
@@ -706,6 +715,7 @@ fun BudgetScreen(
         }
 
         item { Spacer(modifier = Modifier.height(30.dp)) }
+    }
     }
 
     // Add Scheduled Expense Dialog
