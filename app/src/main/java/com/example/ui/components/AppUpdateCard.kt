@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateCard(
-    currentVersion: String = "1.4",
+    currentVersion: String = "1.6",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -74,7 +74,7 @@ fun AppUpdateCard(
 
     val currentVer = remember {
         val installed = updateManager.getInstalledVersionName()
-        if (installed.isNotBlank()) installed else "1.4"
+        if (installed.isNotBlank()) installed else "1.6"
     }
 
     var isChecking by remember { mutableStateOf(false) }
@@ -89,9 +89,9 @@ fun AppUpdateCard(
     var repoInput by remember { mutableStateOf(updateManager.getRepositoryName()) }
 
     var showPublishDialog by remember { mutableStateOf(false) }
-    var publishVersion by remember { mutableStateOf("1.5") }
-    var publishNotes by remember { mutableStateOf("Versión 1.5: Mejoras de rendimiento, interfaz renovada y estabilidad general.") }
-    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.5/app-debug.apk") }
+    var publishVersion by remember { mutableStateOf("1.6") }
+    var publishNotes by remember { mutableStateOf("Versión 1.6: Descarga directa de APK optimizada con resolución automática de enlaces, Pull-to-Refresh y precisión multimoneda.") }
+    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.2/FinanzasClara-v1.2.apk") }
     var isPublishing by remember { mutableStateOf(false) }
 
     Card(
@@ -352,22 +352,37 @@ fun AppUpdateCard(
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ErrorOutline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = err,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = err,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                        if (err.contains("Releases") || err.contains("GitHub") || err.contains("404")) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    val browserIntent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("https://github.com/${updateManager.getRepositoryName()}/releases")
+                                    )
+                                    context.startActivity(browserIntent)
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Text("🌐 Abrir Releases en GitHub", fontSize = 11.sp, color = Color.White)
+                            }
+                        }
                     }
                 }
             }
@@ -529,9 +544,9 @@ fun AppUpdateCard(
                     errorMessage = null
                     updateInfo = UpdateInfo(
                         hasUpdate = true,
-                        latestVersion = "1.5",
-                        releaseNotes = "🧪 Actualización de prueba (v1.5): ¡Detección de nueva versión funcionando a la perfección! Esta prueba confirma que la app detecta la versión superior, muestra las notas de la versión y activa el instalador APK.",
-                        apkDownloadUrl = "https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.5/app-debug.apk",
+                        latestVersion = "1.7",
+                        releaseNotes = "🧪 Actualización de prueba (v1.7): Verificación completa de descarga e instalación. Descarga el paquete oficial APK y ejecuta el instalador del sistema.",
+                        apkDownloadUrl = "https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.2/FinanzasClara-v1.2.apk",
                         releaseDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
                     )
                 },
@@ -545,7 +560,7 @@ fun AppUpdateCard(
                     tint = WarningAmber
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Probar Detección de Actualización (Simular v1.5)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                Text("Probar Detección y Descarga de Actualización", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }

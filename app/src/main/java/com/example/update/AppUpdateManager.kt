@@ -36,8 +36,10 @@ class AppUpdateManager(private val context: Context) {
     }
 
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
     fun getRepositoryName(): String {
@@ -219,6 +221,105 @@ class AppUpdateManager(private val context: Context) {
         return false
     }
 
+    suspend fun resolveValidApkDownloadUrl(initialUrl: String): String = withContext(Dispatchers.IO) {
+        if (initialUrl.isBlank()) return@withContext initialUrl
+
+        // 1. First test if initialUrl works directly using Range request
+        try {
+            val testReq = Request.Builder()
+                .url(initialUrl)
+                .header("User-Agent", "FinanzasClara-App")
+                .header("Range", "bytes=0-100")
+                .build()
+            val resp = httpClient.newCall(testReq).execute()
+            if (resp.isSuccessful || resp.code == 206) {
+                Log.d(TAG, "initialUrl is valid and reachable: $initialUrl")
+                return@withContext initialUrl
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Direct range check failed for $initialUrl: ${e.message}")
+        }
+
+        // 2. If it's a GitHub URL, try candidate variations or query existing release assets
+        val repo = getRepositoryName()
+        if (initialUrl.contains("github.com", ignoreCase = true)) {
+            val candidates = mutableListOf<String>()
+            val versionRegex = Regex("""v?(\d+\.\d+)""")
+            val match = versionRegex.find(initialUrl)
+            if (match != null) {
+                val v = match.groupValues[1]
+                candidates.add("https://github.com/$repo/releases/download/v$v/FinanzasClara-v$v.apk")
+                candidates.add("https://github.com/$repo/releases/download/v$v/FinanzasClara.apk")
+                candidates.add("https://github.com/$repo/releases/download/v$v/app-debug.apk")
+                candidates.add("https://github.com/$repo/releases/download/$v/FinanzasClara-v$v.apk")
+                candidates.add("https://github.com/$repo/releases/download/$v/FinanzasClara.apk")
+                candidates.add("https://github.com/$repo/releases/download/$v/app-debug.apk")
+            }
+            candidates.add("https://github.com/$repo/releases/latest/download/FinanzasClara.apk")
+            candidates.add("https://github.com/$repo/releases/latest/download/app-debug.apk")
+
+            for (cand in candidates) {
+                try {
+                    val req = Request.Builder()
+                        .url(cand)
+                        .header("User-Agent", "FinanzasClara-App")
+                        .header("Range", "bytes=0-100")
+                        .build()
+                    val resp = httpClient.newCall(req).execute()
+                    if (resp.isSuccessful || resp.code == 206) {
+                        Log.i(TAG, "Resolved valid candidate APK URL: $cand")
+                        return@withContext cand
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Variation B: Query GitHub Releases API to find ANY real existing APK asset!
+            try {
+                val releasesUrl = "https://api.github.com/repos/$repo/releases"
+                val req = Request.Builder()
+                    .url(releasesUrl)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .header("User-Agent", "FinanzasClara-App")
+                    .build()
+                val resp = httpClient.newCall(req).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: "[]"
+                    val releases = org.json.JSONArray(body)
+                    for (i in 0 until releases.length()) {
+                        val rel = releases.getJSONObject(i)
+                        val assets = rel.optJSONArray("assets")
+                        if (assets != null) {
+                            for (j in 0 until assets.length()) {
+                                val asset = assets.getJSONObject(j)
+                                val name = asset.optString("name", "")
+                                val downloadUrl = asset.optString("browser_download_url", "")
+                                if (name.endsWith(".apk", ignoreCase = true) && downloadUrl.isNotBlank()) {
+                                    // Verify this asset URL
+                                    try {
+                                        val checkReq = Request.Builder()
+                                            .url(downloadUrl)
+                                            .header("User-Agent", "FinanzasClara-App")
+                                            .header("Range", "bytes=0-100")
+                                            .build()
+                                        val checkResp = httpClient.newCall(checkReq).execute()
+                                        if (checkResp.isSuccessful || checkResp.code == 206) {
+                                            Log.i(TAG, "Resolved verified existing APK asset from GitHub: $downloadUrl ($name)")
+                                            return@withContext downloadUrl
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed querying GitHub releases for APK asset: ${e.message}")
+            }
+        }
+
+        return@withContext initialUrl
+    }
+
     suspend fun downloadAndInstallApk(
         activity: Activity,
         apkUrl: String,
@@ -234,17 +335,26 @@ class AppUpdateManager(private val context: Context) {
                         }
                         activity.startActivity(intent)
                     }
-                    return@withContext Result.failure(Exception("Por favor concede el permiso para instalar aplicaciones y vuelve a pulsar Actualizar."))
+                    return@withContext Result.failure(Exception("Por favor concede el permiso para instalar aplicaciones desconocidas y vuelve a pulsar Actualizar."))
                 }
             }
 
+            val resolvedUrl = resolveValidApkDownloadUrl(apkUrl)
+            Log.d(TAG, "Downloading APK from: $resolvedUrl (original requested: $apkUrl)")
+
             val request = Request.Builder()
-                .url(apkUrl)
+                .url(resolvedUrl)
                 .header("User-Agent", "FinanzasClara-App")
                 .build()
 
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
+                val repo = getRepositoryName()
+                if (response.code == 404) {
+                    return@withContext Result.failure(
+                        Exception("El archivo APK no se encontró en el servidor (Código 404). Asegúrate de que la Release en GitHub ($repo) tenga el APK adjunto o pulsa 'Abrir en Navegador'.")
+                    )
+                }
                 return@withContext Result.failure(Exception("Error al descargar archivo APK: Código ${response.code}"))
             }
 
@@ -289,6 +399,18 @@ class AppUpdateManager(private val context: Context) {
         }
     }
 
+    fun openReleasesPage(activity: Activity) {
+        val repo = getRepositoryName()
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/$repo/releases")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            activity.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot open releases page: ${e.message}", e)
+        }
+    }
+
     private fun installApk(activity: Activity, apkFile: File) {
         try {
             val apkUri: Uri = FileProvider.getUriForFile(
@@ -299,7 +421,9 @@ class AppUpdateManager(private val context: Context) {
 
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
 
             val resolveInfoList = activity.packageManager.queryIntentActivities(installIntent, 0)
