@@ -40,6 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -300,7 +301,9 @@ fun BackupScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (fbStatus.isConnected) "🟢 Firebase Conectado • ${uiState.transactions.size} movs" else fbStatus.syncStatusText,
+                                text = if (fbStatus.isSyncing) "⏳ Sincronizando con Firebase..."
+                                else if (fbStatus.isConnected) "🟢 Firebase Conectado • ${uiState.transactions.size} movs"
+                                else fbStatus.syncStatusText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (fbStatus.isConnected) PrimaryEmerald else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -320,9 +323,19 @@ fun BackupScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
                             enabled = !fbStatus.isSyncing
                         ) {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (fbStatus.isSyncing) "Sincronizando..." else "Sincronizar Nube", fontSize = 12.sp)
+                            if (fbStatus.isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sincronizando...", fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sincronizar Nube", fontSize = 12.sp)
+                            }
                         }
 
                         Box {

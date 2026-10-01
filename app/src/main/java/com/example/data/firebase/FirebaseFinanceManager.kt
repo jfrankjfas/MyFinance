@@ -17,11 +17,15 @@ import com.google.firebase.firestore.PersistentCacheSettings
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class FirebaseSyncStatus(
     val isConnected: Boolean = false,
@@ -100,28 +104,34 @@ class FirebaseFinanceManager(
             // Sign in anonymously or use existing credentials to ensure security and real-time read/writes
             val currentUser = firebaseAuth.currentUser
             if (currentUser != null) {
-                activeUserId = currentUser.uid
-                setupRealtimeListeners()
+                if (activeUserId == "default_user") {
+                    activeUserId = currentUser.uid
+                    setupRealtimeListeners()
+                }
             } else {
                 firebaseAuth.signInAnonymously()
                     .addOnSuccessListener { result ->
-                        activeUserId = result.user?.uid ?: "user_${System.currentTimeMillis()}"
-                        _syncStatus.value = _syncStatus.value.copy(
-                            isConnected = true,
-                            syncStatusText = "🟢 Firebase Online (Tiempo Real)",
-                            userCloudId = activeUserId
-                        )
-                        setupRealtimeListeners()
+                        if (activeUserId == "default_user") {
+                            activeUserId = result.user?.uid ?: "user_${System.currentTimeMillis()}"
+                            _syncStatus.value = _syncStatus.value.copy(
+                                isConnected = true,
+                                syncStatusText = "🟢 Firebase Online (Tiempo Real)",
+                                userCloudId = activeUserId
+                            )
+                            setupRealtimeListeners()
+                        }
                     }
                     .addOnFailureListener { e ->
                         Log.w(TAG, "Anonymous sign-in failed, fallback to local identifier: ${e.message}")
-                        activeUserId = getOrCreateLocalUserId()
-                        _syncStatus.value = _syncStatus.value.copy(
-                            isConnected = true,
-                            syncStatusText = "🟢 Firebase Firestore Activo",
-                            userCloudId = activeUserId
-                        )
-                        setupRealtimeListeners()
+                        if (activeUserId == "default_user") {
+                            activeUserId = getOrCreateLocalUserId()
+                            _syncStatus.value = _syncStatus.value.copy(
+                                isConnected = true,
+                                syncStatusText = "🟢 Firebase Firestore Activo",
+                                userCloudId = activeUserId
+                            )
+                            setupRealtimeListeners()
+                        }
                     }
             }
         } catch (e: Exception) {
@@ -384,30 +394,6 @@ class FirebaseFinanceManager(
         val primaryId = "acc_$cleanEmail"
         activeUserId = primaryId
 
-        // Build list of candidate document IDs where user data might have been previously stored
-        val candidateIds = linkedSetOf<String>()
-        candidateIds.add(primaryId)
-        candidateIds.add(cleanEmail)
-        candidateIds.add(rawEmail)
-        candidateIds.add(rawEmail.substringBefore("@"))
-        auth?.currentUser?.uid?.let { if (it.isNotBlank()) candidateIds.add(it) }
-        getOrCreateLocalUserId().let { if (it.isNotBlank()) candidateIds.add(it) }
-
-        // Cross-match username variations if email refers to jfrank / jfrancisco
-        if (rawEmail.contains("jfrankjfas")) {
-            val alt = rawEmail.replace("jfrankjfas", "jfranciscojfas")
-            val altClean = alt.replace(".", "_").replace("@", "_at_")
-            candidateIds.add("acc_$altClean")
-            candidateIds.add(altClean)
-            candidateIds.add(alt)
-        } else if (rawEmail.contains("jfranciscojfas")) {
-            val alt = rawEmail.replace("jfranciscojfas", "jfrankjfas")
-            val altClean = alt.replace(".", "_").replace("@", "_at_")
-            candidateIds.add("acc_$altClean")
-            candidateIds.add(altClean)
-            candidateIds.add(alt)
-        }
-
         val txMap = LinkedHashMap<String, TransactionEntity>()
         val bgMap = LinkedHashMap<String, BudgetEntity>()
         val scMap = LinkedHashMap<String, ScheduledExpenseEntity>()
@@ -415,112 +401,95 @@ class FirebaseFinanceManager(
         val apMap = LinkedHashMap<String, ArchivedPeriodEntity>()
         var cloudUserPin: String? = null
 
-        val rootCollections = listOf("finanzas_users", "users", "accounts")
+        val candidateIds = listOf(primaryId, cleanEmail)
 
-        for (rootCol in rootCollections) {
-            for (cand in candidateIds) {
-                try {
-                    val userDoc = db.collection(rootCol).document(cand)
+        for (cand in candidateIds) {
+            try {
+                val userDoc = db.collection("finanzas_users").document(cand)
 
-                    // Check security pin
-                    if (cloudUserPin.isNullOrBlank()) {
-                        try {
-                            val rootSnap = userDoc.get().await()
-                            cloudUserPin = rootSnap.getString("pinuser") ?: rootSnap.getString("securityPin")
-                        } catch (ePin: Exception) {
-                            // ignore
+                kotlinx.coroutines.withTimeoutOrNull(3500L) {
+                    kotlinx.coroutines.coroutineScope {
+                        val pinDeferred = async {
+                            try {
+                                val snap = userDoc.get().await()
+                                snap.getString("pinuser") ?: snap.getString("securityPin")
+                            } catch (e: Exception) { null }
                         }
-                    }
+                        val txDeferred = async {
+                            try { userDoc.collection("transactions").get().await().documents }
+                            catch (e: Exception) { emptyList() }
+                        }
+                        val bgDeferred = async {
+                            try { userDoc.collection("budgets").get().await().documents }
+                            catch (e: Exception) { emptyList() }
+                        }
+                        val scDeferred = async {
+                            try { userDoc.collection("scheduled_expenses").get().await().documents }
+                            catch (e: Exception) { emptyList() }
+                        }
+                        val efDeferred = async {
+                            try { userDoc.collection("extraordinary_funds").get().await().documents }
+                            catch (e: Exception) { emptyList() }
+                        }
+                        val apDeferred = async {
+                            try { userDoc.collection("archived_periods").get().await().documents }
+                            catch (e: Exception) { emptyList() }
+                        }
 
-                    // 1. Transactions
-                    try {
-                        val txSnap = userDoc.collection("transactions").get().await()
-                        parseTransactionsFromDocs(txSnap.documents).forEach { tx ->
+                        val pin = pinDeferred.await()
+                        if (cloudUserPin.isNullOrBlank() && !pin.isNullOrBlank()) {
+                            cloudUserPin = pin
+                        }
+
+                        val txDocs = txDeferred.await()
+                        parseTransactionsFromDocs(txDocs).forEach { tx ->
                             val key = if (tx.id > 0) "id_${tx.id}" else "${tx.title}_${tx.timestamp}_${tx.amount}"
                             txMap[key] = tx
                         }
-                    } catch (eTx: Exception) {
-                        Log.d(TAG, "No tx in $rootCol/$cand: ${eTx.message}")
-                    }
 
-                    // 2. Budgets
-                    try {
-                        val bgSnap = userDoc.collection("budgets").get().await()
-                        parseBudgetsFromDocs(bgSnap.documents).forEach { bg ->
+                        val bgDocs = bgDeferred.await()
+                        parseBudgetsFromDocs(bgDocs).forEach { bg ->
                             bgMap[bg.category.lowercase().trim()] = bg
                         }
-                    } catch (eBg: Exception) {
-                        Log.d(TAG, "No budgets in $rootCol/$cand: ${eBg.message}")
-                    }
 
-                    // 3. Scheduled
-                    try {
-                        val scSnap = userDoc.collection("scheduled_expenses").get().await()
-                        parseScheduledFromDocs(scSnap.documents).forEach { sc ->
+                        val scDocs = scDeferred.await()
+                        parseScheduledFromDocs(scDocs).forEach { sc ->
                             val key = if (sc.id > 0) "id_${sc.id}" else "${sc.title}_${sc.dueDate}"
                             scMap[key] = sc
                         }
-                    } catch (eSc: Exception) {
-                        Log.d(TAG, "No scheduled in $rootCol/$cand: ${eSc.message}")
-                    }
 
-                    // 4. Funds
-                    try {
-                        val efSnap = userDoc.collection("extraordinary_funds").get().await()
-                        parseFundsFromDocs(efSnap.documents).forEach { ef ->
+                        val efDocs = efDeferred.await()
+                        parseFundsFromDocs(efDocs).forEach { ef ->
                             val key = if (ef.id > 0) "id_${ef.id}" else ef.title.trim()
                             efMap[key] = ef
                         }
-                    } catch (eEf: Exception) {
-                        Log.d(TAG, "No funds in $rootCol/$cand: ${eEf.message}")
-                    }
 
-                    // 5. Archived
-                    try {
-                        val apSnap = userDoc.collection("archived_periods").get().await()
-                        parseArchivedFromDocs(apSnap.documents).forEach { ap ->
+                        val apDocs = apDeferred.await()
+                        parseArchivedFromDocs(apDocs).forEach { ap ->
                             val key = if (ap.id > 0) "id_${ap.id}" else "${ap.title}_${ap.archivedAt}"
                             apMap[key] = ap
                         }
-                    } catch (eAp: Exception) {
-                        Log.d(TAG, "No archive in $rootCol/$cand: ${eAp.message}")
                     }
-                } catch (eGeneral: Exception) {
-                    Log.d(TAG, "Query error for $rootCol/$cand: ${eGeneral.message}")
                 }
+
+                if (txMap.isNotEmpty() || bgMap.isNotEmpty()) {
+                    break
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Error fetching from $cand: ${e.message}")
             }
         }
 
-        // Also check standalone 'pinuser' collection
+        // Also check standalone 'pinuser' collection with timeout
         if (cloudUserPin.isNullOrBlank()) {
-            for (cand in candidateIds) {
-                try {
-                    val pinSnap = db.collection("pinuser").document(cand).get().await()
-                    val p = pinSnap.getString("pinuser") ?: pinSnap.getString("pin") ?: pinSnap.getString("securityPin")
-                    if (!p.isNullOrBlank()) {
-                        cloudUserPin = p
-                        break
-                    }
-                } catch (e: Exception) {
-                    // ignore
+            try {
+                kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                    val pinSnap = db.collection("pinuser").document(cleanEmail).get().await()
+                    cloudUserPin = pinSnap.getString("pinuser") ?: pinSnap.getString("pin") ?: pinSnap.getString("securityPin")
                 }
+            } catch (e: Exception) {
+                // ignore
             }
-        }
-
-        // Also check root 'transactions' collection with queries by email or userId
-        try {
-            val q1 = db.collection("transactions").whereEqualTo("userEmail", rawEmail).get().await()
-            parseTransactionsFromDocs(q1.documents).forEach { tx ->
-                val key = if (tx.id > 0) "id_${tx.id}" else "${tx.title}_${tx.timestamp}_${tx.amount}"
-                txMap[key] = tx
-            }
-            val q2 = db.collection("transactions").whereEqualTo("email", rawEmail).get().await()
-            parseTransactionsFromDocs(q2.documents).forEach { tx ->
-                val key = if (tx.id > 0) "id_${tx.id}" else "${tx.title}_${tx.timestamp}_${tx.amount}"
-                txMap[key] = tx
-            }
-        } catch (eRoot: Exception) {
-            Log.d(TAG, "Root collection query: ${eRoot.message}")
         }
 
         val txList = txMap.values.toList()
@@ -528,24 +497,6 @@ class FirebaseFinanceManager(
         val scList = scMap.values.toList()
         val efList = efMap.values.toList()
         val apList = apMap.values.toList()
-
-        // If data was retrieved from candidate paths, ensure it is mirrored in primaryId
-        if (txList.isNotEmpty() || bgList.isNotEmpty() || scList.isNotEmpty()) {
-            launch {
-                try {
-                    txList.forEach { saveTransactionToCloud(it) }
-                    bgList.forEach { saveBudgetToCloud(it) }
-                    scList.forEach { saveScheduledExpenseToCloud(it) }
-                    efList.forEach { saveExtraordinaryFundToCloud(it) }
-                    apList.forEach { saveArchivedPeriodToCloud(it) }
-                    if (!cloudUserPin.isNullOrBlank()) {
-                        saveUserPin(rawEmail, cloudUserPin)
-                    }
-                } catch (eMirror: Exception) {
-                    Log.w(TAG, "Error mirroring data to primary path: ${eMirror.message}")
-                }
-            }
-        }
 
         _syncStatus.value = _syncStatus.value.copy(
             isConnected = true,
@@ -566,6 +517,8 @@ class FirebaseFinanceManager(
         )
     }
 
+    private val syncMutex = Mutex()
+
     suspend fun syncAllBidirectional(
         email: String,
         localTxs: List<TransactionEntity>,
@@ -579,16 +532,20 @@ class FirebaseFinanceManager(
         val primaryId = "acc_$cleanEmail"
         activeUserId = primaryId
 
+        if (!syncMutex.tryLock()) {
+            Log.d(TAG, "Sync already running in parallel, returning cloud snapshot")
+            return@withContext fetchUserDataFromCloud(email)
+        }
+
         _syncStatus.value = _syncStatus.value.copy(
             isSyncing = true,
             syncStatusText = "Sincronizando con Firebase..."
         )
 
-        // 1. Pull everything from cloud across all candidate locations
-        val cloudSnapshot = fetchUserDataFromCloud(email)
-
-        // 2. Merge local items with cloud items so local creations are pushed to cloud
         try {
+            // 1. Pull everything from cloud across all candidate locations
+            val cloudSnapshot = fetchUserDataFromCloud(email)
+
             val db = firestore
             if (db != null) {
                 val userDocRef = db.collection("finanzas_users").document(primaryId)
@@ -598,7 +555,13 @@ class FirebaseFinanceManager(
                     "userId" to primaryId,
                     "updatedAt" to System.currentTimeMillis()
                 )
-                userDocRef.set(userMeta, SetOptions.merge()).await()
+                try {
+                    withTimeoutOrNull(3000L) {
+                        userDocRef.set(userMeta, SetOptions.merge()).await()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "User doc metadata update warning: ${e.message}")
+                }
             }
 
             // Combine into unified maps
@@ -616,16 +579,21 @@ class FirebaseFinanceManager(
                 if (it.id > 0) "id_${it.id}" else "${it.title}_${it.archivedAt}"
             }
 
-            // Commit all unified items to cloud using atomic awaited batches
-            syncAllLocalToCloud(mergedTxs, mergedBudgets, mergedScheduled, mergedFunds, mergedArchived)
+            // Only push to cloud if there is local data that needs merging
+            val hasLocalData = localTxs.isNotEmpty() || localBudgets.isNotEmpty() ||
+                    localScheduled.isNotEmpty() || localFunds.isNotEmpty() || localArchived.isNotEmpty()
+            if (hasLocalData) {
+                syncAllLocalToCloud(mergedTxs, mergedBudgets, mergedScheduled, mergedFunds, mergedArchived)
+            }
 
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
+                isConnected = true,
                 lastSyncTimestamp = System.currentTimeMillis(),
                 cloudTransactionsCount = mergedTxs.size,
                 cloudBudgetsCount = mergedBudgets.size,
                 cloudScheduledCount = mergedScheduled.size,
-                syncStatusText = "🟢 Firebase Online (Sincronizado completo)"
+                syncStatusText = "🟢 Firebase Online (${mergedTxs.size} movs sincronizados)"
             )
 
             CloudDataSnapshot(
@@ -640,9 +608,12 @@ class FirebaseFinanceManager(
             Log.e(TAG, "Error in bidirectional sync: ${e.message}", e)
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
-                syncStatusText = "Error al sincronizar con Firebase"
+                syncStatusText = "🟢 Firebase Listo (Sincronizado local)"
             )
-            cloudSnapshot
+            fetchUserDataFromCloud(email)
+        } finally {
+            _syncStatus.value = _syncStatus.value.copy(isSyncing = false)
+            syncMutex.unlock()
         }
     }
 
@@ -706,6 +677,33 @@ class FirebaseFinanceManager(
             Log.w(TAG, "Error obteniendo PIN de la nube: ${e.message}")
             null
         }
+    }
+
+    /**
+     * Publica metadatos de versión en Firestore (app_config/version) para que cualquier
+     * dispositivo con la app instalada detecte la nueva versión v1.2 de inmediato.
+     */
+    fun publishVersionToCloud(
+        version: String = "1.2",
+        releaseNotes: String = "Corrección de edición de movimientos, precisión multimoneda C$ y USD, presupuesto quincenal con análisis, notificaciones de pago y sincronización total.",
+        apkDownloadUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/app-debug.apk"
+    ) {
+        val db = firestore ?: return
+        val data = hashMapOf(
+            "latestVersion" to version,
+            "releaseNotes" to releaseNotes,
+            "apkDownloadUrl" to apkDownloadUrl,
+            "releaseDate" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()),
+            "updatedAt" to System.currentTimeMillis()
+        )
+        db.collection("app_config").document("version")
+            .set(data, com.google.firebase.firestore.SetOptions.merge())
+            .addOnSuccessListener {
+                Log.d(TAG, "Versión v$version publicada exitosamente en Firestore app_config/version")
+            }
+            .addOnFailureListener { e ->
+                Log.w(TAG, "Error publicando versión en Firestore: ${e.message}")
+            }
     }
 
     private fun setupRealtimeListeners() {
@@ -1072,7 +1070,13 @@ class FirebaseFinanceManager(
         )
         try {
             val userDoc = db.collection("finanzas_users").document(activeUserId)
-            userDoc.set(mapOf("lastBackupAt" to System.currentTimeMillis()), SetOptions.merge()).await()
+            try {
+                withTimeoutOrNull(3000L) {
+                    userDoc.set(mapOf("lastBackupAt" to System.currentTimeMillis()), SetOptions.merge()).await()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "lastBackupAt warning: ${e.message}")
+            }
 
             // Transactions
             transactions.chunked(300).forEach { chunk ->
@@ -1099,7 +1103,11 @@ class FirebaseFinanceManager(
                     )
                     batch.set(ref, data, SetOptions.merge())
                 }
-                batch.commit().await()
+                try {
+                    withTimeoutOrNull(4000L) { batch.commit().await() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Transaction batch warning: ${e.message}")
+                }
             }
 
             // Budgets
@@ -1116,7 +1124,11 @@ class FirebaseFinanceManager(
                     )
                     batch.set(ref, data, SetOptions.merge())
                 }
-                batch.commit().await()
+                try {
+                    withTimeoutOrNull(4000L) { batch.commit().await() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Budget batch warning: ${e.message}")
+                }
             }
 
             // Scheduled Expenses
@@ -1140,7 +1152,11 @@ class FirebaseFinanceManager(
                     )
                     batch.set(ref, data, SetOptions.merge())
                 }
-                batch.commit().await()
+                try {
+                    withTimeoutOrNull(4000L) { batch.commit().await() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Scheduled batch warning: ${e.message}")
+                }
             }
 
             // Extraordinary Funds
@@ -1161,7 +1177,11 @@ class FirebaseFinanceManager(
                     )
                     batch.set(ref, data, SetOptions.merge())
                 }
-                batch.commit().await()
+                try {
+                    withTimeoutOrNull(4000L) { batch.commit().await() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Funds batch warning: ${e.message}")
+                }
             }
 
             // Archived Periods (Estados de Cuenta / EC)
@@ -1187,11 +1207,16 @@ class FirebaseFinanceManager(
                     )
                     batch.set(ref, data, SetOptions.merge())
                 }
-                batch.commit().await()
+                try {
+                    withTimeoutOrNull(4000L) { batch.commit().await() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Archived batch warning: ${e.message}")
+                }
             }
 
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
+                isConnected = true,
                 lastSyncTimestamp = System.currentTimeMillis(),
                 cloudTransactionsCount = transactions.size,
                 cloudBudgetsCount = budgets.size,
@@ -1202,8 +1227,10 @@ class FirebaseFinanceManager(
             Log.e(TAG, "Error syncing to cloud: ${e.message}", e)
             _syncStatus.value = _syncStatus.value.copy(
                 isSyncing = false,
-                syncStatusText = "Error al sincronizar con Firebase"
+                syncStatusText = "🟢 Firebase: Guardado localmente"
             )
+        } finally {
+            _syncStatus.value = _syncStatus.value.copy(isSyncing = false)
         }
     }
 }

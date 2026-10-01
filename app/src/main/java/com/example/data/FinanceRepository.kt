@@ -248,6 +248,10 @@ class FinanceRepository(
         firebaseManager?.saveUserPin(email, pin)
     }
 
+    fun publishVersionToCloud(version: String, notes: String, apkUrl: String) {
+        firebaseManager?.publishVersionToCloud(version, notes, apkUrl)
+    }
+
     suspend fun fetchUserPinFromCloud(email: String): String? {
         return firebaseManager?.fetchUserPin(email)
     }

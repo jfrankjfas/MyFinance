@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -63,7 +64,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateCard(
-    currentVersion: String = "1.1",
+    currentVersion: String = "1.2",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -86,6 +87,12 @@ fun AppUpdateCard(
 
     var showRepoDialog by remember { mutableStateOf(false) }
     var repoInput by remember { mutableStateOf(updateManager.getRepositoryName()) }
+
+    var showPublishDialog by remember { mutableStateOf(false) }
+    var publishVersion by remember { mutableStateOf("1.3") }
+    var publishNotes by remember { mutableStateOf("Sincronización Firebase ultrarrápida, edición de movimientos y precisión multimoneda.") }
+    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.3/app-debug.apk") }
+    var isPublishing by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -130,6 +137,17 @@ fun AppUpdateCard(
                 }
 
                 IconButton(onClick = { 
+                    showPublishDialog = !showPublishDialog 
+                }) {
+                    Icon(
+                        imageVector = Icons.Default.CloudUpload,
+                        contentDescription = "Publicar Versión en Firebase",
+                        tint = SleekPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                IconButton(onClick = { 
                     repoInput = updateManager.getRepositoryName()
                     showRepoDialog = !showRepoDialog 
                 }) {
@@ -139,6 +157,101 @@ fun AppUpdateCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
                     )
+                }
+            }
+
+            AnimatedVisibility(visible = showPublishDialog) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = SleekPrimary.copy(alpha = 0.08f),
+                    border = BorderStroke(1.dp, SleekPrimary.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "🚀 Publicar Versión en la Nube (Firebase)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Al guardar, cualquier dispositivo que tenga la app instalada detectará la actualización inmediatamente al pulsar 'Comprobar Actualizaciones'.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = publishVersion,
+                            onValueChange = { publishVersion = it },
+                            label = { Text("Versión a publicar (ej: 1.3)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = publishApkUrl,
+                            onValueChange = { publishApkUrl = it },
+                            label = { Text("URL Directa del APK") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = publishNotes,
+                            onValueChange = { publishNotes = it },
+                            label = { Text("Notas de la versión") },
+                            maxLines = 3,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                isPublishing = true
+                                coroutineScope.launch {
+                                    try {
+                                        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                        val data = hashMapOf(
+                                            "latestVersion" to publishVersion.trim(),
+                                            "releaseNotes" to publishNotes.trim(),
+                                            "apkDownloadUrl" to publishApkUrl.trim(),
+                                            "releaseDate" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()),
+                                            "updatedAt" to System.currentTimeMillis()
+                                        )
+                                        db.collection("app_config").document("version")
+                                            .set(data, com.google.firebase.firestore.SetOptions.merge())
+                                        Toast.makeText(context, "✅ Versión v$publishVersion publicada en Firebase!", Toast.LENGTH_LONG).show()
+                                        showPublishDialog = false
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        isPublishing = false
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            enabled = !isPublishing && publishVersion.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary)
+                        ) {
+                            if (isPublishing) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Publicando...", fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Guardar en Firebase (app_config/version)", fontSize = 12.sp)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -203,23 +316,31 @@ fun AppUpdateCard(
                     color = IncomeGreen.copy(alpha = 0.12f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = IncomeGreen,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "✅ Tu app está en la versión más reciente (v$currentVer).",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = IncomeGreen
-                        )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = IncomeGreen,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "✅ Tu app está en la versión v$currentVer.",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = IncomeGreen
+                            )
+                        }
+                        updateInfo?.releaseNotes?.takeIf { it.isNotBlank() }?.let { notes ->
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = notes,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 15.sp
+                            )
+                        }
                     }
                 }
             }

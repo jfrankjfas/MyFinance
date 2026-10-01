@@ -66,9 +66,9 @@ class AppUpdateManager(private val context: Context) {
     fun getInstalledVersionName(): String {
         return try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            pInfo.versionName ?: "1.1"
+            pInfo.versionName ?: "1.2"
         } catch (e: Exception) {
-            "1.1"
+            "1.2"
         }
     }
 
@@ -190,7 +190,7 @@ class AppUpdateManager(private val context: Context) {
                     UpdateInfo(
                         hasUpdate = false,
                         latestVersion = currentVer,
-                        releaseNotes = "Repositorio configurado: $repo. No hay releases ni versiones superiores publicadas.",
+                        releaseNotes = "Repositorio GitHub '$repo' no encontrado (404) o sin releases públicas. Puedes crearlo en GitHub con una Release y su APK, o configurar la versión directamente en Firebase.",
                         apkDownloadUrl = "",
                         releaseDate = ""
                     )
