@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateCard(
-    currentVersion: String = "1.2",
+    currentVersion: String = "1.4",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -74,7 +74,7 @@ fun AppUpdateCard(
 
     val currentVer = remember {
         val installed = updateManager.getInstalledVersionName()
-        if (installed.isNotBlank()) installed else "1.1"
+        if (installed.isNotBlank()) installed else "1.4"
     }
 
     var isChecking by remember { mutableStateOf(false) }
@@ -89,9 +89,9 @@ fun AppUpdateCard(
     var repoInput by remember { mutableStateOf(updateManager.getRepositoryName()) }
 
     var showPublishDialog by remember { mutableStateOf(false) }
-    var publishVersion by remember { mutableStateOf("1.3") }
-    var publishNotes by remember { mutableStateOf("Sincronización Firebase ultrarrápida, edición de movimientos y precisión multimoneda.") }
-    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.3/app-debug.apk") }
+    var publishVersion by remember { mutableStateOf("1.5") }
+    var publishNotes by remember { mutableStateOf("Versión 1.5: Mejoras de rendimiento, interfaz renovada y estabilidad general.") }
+    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.5/app-debug.apk") }
     var isPublishing by remember { mutableStateOf(false) }
 
     Card(
@@ -519,6 +519,33 @@ fun AppUpdateCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Comprobar Actualizaciones Ahora", fontSize = 13.sp)
                 }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = {
+                    isUpToDate = false
+                    errorMessage = null
+                    updateInfo = UpdateInfo(
+                        hasUpdate = true,
+                        latestVersion = "1.5",
+                        releaseNotes = "🧪 Actualización de prueba (v1.5): ¡Detección de nueva versión funcionando a la perfección! Esta prueba confirma que la app detecta la versión superior, muestra las notas de la versión y activa el instalador APK.",
+                        apkDownloadUrl = "https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.5/app-debug.apk",
+                        releaseDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.NewReleases,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = WarningAmber
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Probar Detección de Actualización (Simular v1.5)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }

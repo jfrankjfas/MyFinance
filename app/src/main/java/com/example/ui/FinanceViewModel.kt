@@ -511,11 +511,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         repository.bindFirebaseManager(firebaseManager)
-        // Ensure Firestore cloud version metadata is set to v1.3 for all active devices
+        // Ensure Firestore cloud version metadata is set to v1.4 for all active devices
         repository.publishVersionToCloud(
-            version = "1.3",
-            notes = "Sincronización Firebase ultrarrápida sin bloqueos, edición de movimientos, precisión multimoneda C$ y USD, presupuesto quincenal y notificaciones.",
-            apkUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.3/app-debug.apk"
+            version = "1.4",
+            notes = "Versión 1.4: Corrección de precisión multimoneda en Ingresos Extraordinarios ($ y C$), sincronización con gesto táctil hacia abajo (Pull-to-Refresh) y mejoras de rendimiento.",
+            apkUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.4/app-debug.apk"
         )
         viewModelScope.launch {
             repository.seedInitialDataIfEmpty(getApplication())
@@ -561,9 +561,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun publishNewVersionToCloud(
-        version: String = "1.3",
-        notes: String = "Sincronización Firebase ultrarrápida sin bloqueos, edición de movimientos, precisión multimoneda C$ y USD, presupuesto quincenal y notificaciones.",
-        apkUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.3/app-debug.apk"
+        version: String = "1.4",
+        notes: String = "Versión 1.4: Corrección de precisión multimoneda en Ingresos Extraordinarios ($ y C$), sincronización con gesto táctil hacia abajo (Pull-to-Refresh) y mejoras de rendimiento.",
+        apkUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.4/app-debug.apk"
     ) {
         repository.publishVersionToCloud(version, notes, apkUrl)
         _importMessage.value = "🚀 Versión v$version publicada en Firebase Firestore (app_config/version). Todos los dispositivos la detectarán automáticamente."

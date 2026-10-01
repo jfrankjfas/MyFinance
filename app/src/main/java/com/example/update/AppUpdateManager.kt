@@ -66,9 +66,9 @@ class AppUpdateManager(private val context: Context) {
     fun getInstalledVersionName(): String {
         return try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            pInfo.versionName ?: "1.2"
+            pInfo.versionName ?: com.example.BuildConfig.VERSION_NAME
         } catch (e: Exception) {
-            "1.2"
+            com.example.BuildConfig.VERSION_NAME
         }
     }
 
