@@ -91,6 +91,7 @@ import coil.compose.AsyncImage
 import com.example.ai.ReceiptScanResult
 import com.example.data.AttachmentStorageHelper
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.AccountBalance
@@ -119,12 +120,15 @@ import java.util.Locale
 fun BudgetScreen(
     uiState: FinanceUiState,
     onSaveBudgetLimit: (category: String, limit: Double, threshold: Int) -> Unit,
+    onDeleteBudget: (category: String) -> Unit = {},
     onSetBudgetPeriodMode: (mode: String) -> Unit,
-    onAddScheduledExpense: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String) -> Unit,
+    onAddScheduledExpense: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isRecurring: Boolean) -> Unit,
+    onUpdateScheduledExpense: (id: Long, title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isPriority: Boolean, isRecurring: Boolean) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
     onMarkScheduledExpensePaid: (expense: ScheduledExpenseEntity) -> Unit,
     onDeleteScheduledExpense: (expense: ScheduledExpenseEntity) -> Unit,
     onScanReceiptWithDueDate: ((Uri, (ReceiptScanResult) -> Unit) -> Unit)? = null,
     onArchivePeriod: (title: String, note: String, clearPeriodData: Boolean) -> Unit = { _, _, _ -> },
+    onArchiveAndClosePeriod: (title: String, note: String, periodMode: String, startTimestamp: Long?, endTimestamp: Long?, clearPeriodData: Boolean, closePermanently: Boolean) -> Unit = { _, _, _, _, _, _, _ -> },
     onDeleteArchivedPeriod: (ArchivedPeriodEntity) -> Unit = {},
     onCloseArchivedPeriod: (Long) -> Unit = {},
     onAddTransactionToArchivedPeriod: (periodId: Long, title: String, amount: Double, category: String, type: String, note: String) -> Unit = { _, _, _, _, _, _ -> },
@@ -141,17 +145,17 @@ fun BudgetScreen(
     modifier: Modifier = Modifier
 ) {
     var showAddScheduledDialog by remember { mutableStateOf(false) }
+    var editingScheduledExpense by remember { mutableStateOf<ScheduledExpenseEntity?>(null) }
     var showArchiveConfirmDialog by remember { mutableStateOf(false) }
     var showArchivedStatementsList by remember { mutableStateOf(false) }
     var selectedArchivedStatement by remember { mutableStateOf<ArchivedPeriodEntity?>(null) }
 
     val context = LocalContext.current
     val activeSymbol = uiState.currencySymbol
-    val exchangeRate = uiState.exchangeRate2
-    var generalLimitInput by remember(uiState.budgets, activeSymbol) {
+    var generalLimitInput by remember(uiState.budgets, activeSymbol, uiState.activeConversionMultiplier) {
         val general = uiState.budgets.find { it.category == "GENERAL" }
         val rawLimit = general?.limitAmount ?: 0.0
-        val displayLimit = if (activeSymbol == "$" && exchangeRate > 0) (rawLimit / exchangeRate) else rawLimit
+        val displayLimit = rawLimit * uiState.activeConversionMultiplier
         mutableStateOf(if (displayLimit > 0) String.format(Locale.US, "%.2f", displayLimit) else "")
     }
 
@@ -519,18 +523,20 @@ fun BudgetScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Gastos Programados",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Notificaciones automáticas 2 días antes y 1 día antes del pago",
+                        text = "Notificaciones automáticas 2 días y 1 día antes del pago",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Button(
                     onClick = { showAddScheduledDialog = true },
@@ -539,7 +545,7 @@ fun BudgetScreen(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Programar")
+                    Text("Programar", maxLines = 1, fontSize = 12.sp)
                 }
             }
         }
@@ -585,6 +591,7 @@ fun BudgetScreen(
                 ScheduledExpenseItemCard(
                     item = item,
                     currencySymbol = uiState.currencySymbol,
+                    onEdit = { editingScheduledExpense = item },
                     onMarkPaid = { onMarkScheduledExpensePaid(item) },
                     onDelete = { onDeleteScheduledExpense(item) }
                 )
@@ -657,9 +664,7 @@ fun BudgetScreen(
                             onClick = {
                                 val parsed = generalLimitInput.replace(',', '.').trim().toDoubleOrNull() ?: 0.0
                                 if (parsed > 0) {
-                                    val baseNio = if (uiState.currencySymbol == "$" && uiState.exchangeRate2 > 0) parsed * uiState.exchangeRate2 else parsed
-                                    onSaveBudgetLimit("GENERAL", baseNio, 80)
-                                    android.widget.Toast.makeText(context, "🎯 Presupuesto general guardado: ${uiState.currencySymbol}${String.format(Locale.US, "%.2f", parsed)}", android.widget.Toast.LENGTH_SHORT).show()
+                                    onSaveBudgetLimit("GENERAL", parsed, 80)
                                 }
                             },
                             modifier = Modifier.weight(1.2f),
@@ -693,9 +698,18 @@ fun BudgetScreen(
             }
         } else {
             items(uiState.budgetProgresses) { progress ->
+                val isCustomCat = !progress.category.startsWith("Presupuesto")
                 BudgetProgressBarCard(
                     progress = progress,
-                    currencySymbol = uiState.currencySymbol
+                    currencySymbol = uiState.currencySymbol,
+                    onEdit = if (isCustomCat) {
+                        {
+                            selectedCatForBudget = progress.category
+                            catLimitInput = String.format(Locale.US, "%.2f", progress.limitAmount)
+                            showCategoryBudgetDialog = true
+                        }
+                    } else null,
+                    onDelete = if (isCustomCat) { { onDeleteBudget(progress.category) } } else null
                 )
             }
         }
@@ -722,11 +736,37 @@ fun BudgetScreen(
     if (showAddScheduledDialog) {
         AddScheduledExpenseDialog(
             currencySymbol = uiState.currencySymbol,
+            initialExpense = null,
             onDismiss = { showAddScheduledDialog = false },
             onScanReceiptWithDueDate = onScanReceiptWithDueDate,
-            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note ->
-                onAddScheduledExpense(title, amount, category, dueDate, notify, attachmentUri, note)
+            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note, isRecurring ->
+                onAddScheduledExpense(title, amount, category, dueDate, notify, attachmentUri, note, isRecurring)
                 showAddScheduledDialog = false
+            }
+        )
+    }
+
+    // Edit Scheduled Expense Dialog
+    editingScheduledExpense?.let { expenseToEdit ->
+        AddScheduledExpenseDialog(
+            currencySymbol = uiState.currencySymbol,
+            initialExpense = expenseToEdit,
+            onDismiss = { editingScheduledExpense = null },
+            onScanReceiptWithDueDate = onScanReceiptWithDueDate,
+            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note, isRecurring ->
+                onUpdateScheduledExpense(
+                    expenseToEdit.id,
+                    title,
+                    amount,
+                    category,
+                    dueDate,
+                    notify,
+                    attachmentUri,
+                    note,
+                    expenseToEdit.isEmergencyPriority,
+                    isRecurring
+                )
+                editingScheduledExpense = null
             }
         )
     }
@@ -794,10 +834,9 @@ fun BudgetScreen(
                     onClick = {
                         val parsed = catLimitInput.replace(',', '.').trim().toDoubleOrNull() ?: 0.0
                         if (parsed > 0) {
-                            val baseNio = if (uiState.currencySymbol == "$" && uiState.exchangeRate2 > 0) parsed * uiState.exchangeRate2 else parsed
-                            onSaveBudgetLimit(selectedCatForBudget, baseNio, 80)
-                            android.widget.Toast.makeText(context, "🎯 Presupuesto de $selectedCatForBudget guardado", android.widget.Toast.LENGTH_SHORT).show()
+                            onSaveBudgetLimit(selectedCatForBudget, parsed, 80)
                             showCategoryBudgetDialog = false
+                            catLimitInput = ""
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
@@ -814,7 +853,7 @@ fun BudgetScreen(
         )
     }
 
-    // Archiving & Statement Dialogs
+    // Archiving & Statement Dialogs (2-Step Pre-Cierre & Official Lock)
     if (showArchiveConfirmDialog) {
         ArchiveConfirmDialog(
             periodMode = uiState.budgetPeriodMode,
@@ -823,9 +862,9 @@ fun BudgetScreen(
             scheduledTotal = uiState.periodPendingExpensesTotal,
             currencySymbol = uiState.currencySymbol,
             onDismiss = { showArchiveConfirmDialog = false },
-            onConfirm = { title, note, clearPeriodData ->
+            onConfirm = { title, note, mode, sMs, eMs, clearPeriodData, closePermanently ->
                 showArchiveConfirmDialog = false
-                onArchivePeriod(title, note, clearPeriodData)
+                onArchiveAndClosePeriod(title, note, mode, sMs, eMs, clearPeriodData, closePermanently)
             }
         )
     }
@@ -869,6 +908,7 @@ fun BudgetScreen(
 fun ScheduledExpenseItemCard(
     item: ScheduledExpenseEntity,
     currencySymbol: String,
+    onEdit: (() -> Unit)? = null,
     onMarkPaid: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -883,6 +923,7 @@ fun ScheduledExpenseItemCard(
     val daysRemaining = (diffMs / dayMs).toInt()
 
     var showImageModal by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -1024,12 +1065,43 @@ fun ScheduledExpenseItemCard(
                         }
                     }
 
-                    IconButton(onClick = onDelete) {
+                    if (onEdit != null) {
+                        IconButton(onClick = onEdit) {
+                            Icon(Icons.Default.Edit, contentDescription = "Editar", tint = PrimaryEmerald, modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    IconButton(onClick = { showDeleteConfirm = true }) {
                         Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                     }
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("¿Eliminar gasto programado?", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Estás seguro de que deseas eliminar '${item.title}'? Esta acción no se puede deshacer.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     if (showImageModal && !item.attachmentUri.isNullOrBlank()) {
@@ -1080,24 +1152,34 @@ fun ScheduledExpenseItemCard(
 @Composable
 fun AddScheduledExpenseDialog(
     currencySymbol: String,
+    initialExpense: ScheduledExpenseEntity? = null,
     onDismiss: () -> Unit,
     onScanReceiptWithDueDate: ((Uri, (ReceiptScanResult) -> Unit) -> Unit)? = null,
-    onConfirm: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String) -> Unit
+    onConfirm: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isRecurring: Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    var title by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("Servicios") }
-    var notifyReminder by remember { mutableStateOf(true) }
+    var title by remember { mutableStateOf(initialExpense?.title ?: "") }
+    var amountText by remember {
+        mutableStateOf(
+            if (initialExpense != null && initialExpense.amount > 0)
+                String.format(Locale.US, "%.2f", initialExpense.amount)
+            else ""
+        )
+    }
+    var selectedCategory by remember { mutableStateOf(initialExpense?.category ?: "Servicios") }
+    var notifyReminder by remember { mutableStateOf(initialExpense?.notifyReminder ?: true) }
+    var isRecurringMonthly by remember { mutableStateOf(initialExpense?.isRecurringMonthly ?: false) }
     var categoryExpanded by remember { mutableStateOf(false) }
 
     val calendar = remember { Calendar.getInstance() }
-    var selectedDueDateMs by remember { mutableLongStateOf(calendar.timeInMillis + (3 * 86400000L)) }
+    var selectedDueDateMs by remember {
+        mutableLongStateOf(initialExpense?.dueDate ?: (calendar.timeInMillis + (3 * 86400000L)))
+    }
 
     val sdf = SimpleDateFormat("dd 'de' MMMM, yyyy", Locale("es", "ES"))
     val formattedSelectedDate = sdf.format(Date(selectedDueDateMs))
 
-    var attachedImageUri by remember { mutableStateOf<String?>(null) }
+    var attachedImageUri by remember { mutableStateOf<String?>(initialExpense?.attachmentUri) }
     var isScanningAttachment by remember { mutableStateOf(false) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -1285,6 +1367,22 @@ fun AddScheduledExpenseDialog(
                         colors = SwitchDefaults.colors(checkedThumbColor = WarningAmber)
                     )
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("🔁 Recurrente Mensual", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                        Text("Se renueva para el siguiente mes automáticamente al pagar", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = isRecurringMonthly,
+                        onCheckedChange = { isRecurringMonthly = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = PrimaryEmerald)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -1293,13 +1391,13 @@ fun AddScheduledExpenseDialog(
             Button(
                 onClick = {
                     if (title.isNotBlank() && parsedAmount > 0) {
-                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder, attachedImageUri, "")
+                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder, attachedImageUri, "", isRecurringMonthly)
                     }
                 },
                 enabled = title.isNotBlank() && parsedAmount > 0,
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald)
             ) {
-                Text("Programar")
+                Text(if (initialExpense != null) "Actualizar" else "Programar")
             }
         },
         dismissButton = {

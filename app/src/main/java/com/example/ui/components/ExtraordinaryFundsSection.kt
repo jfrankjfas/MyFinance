@@ -89,6 +89,7 @@ fun ExtraordinaryFundsSection(
     var showCreateFundDialog by remember { mutableStateOf(false) }
     var selectedFundForDetail by remember { mutableStateOf<ExtraordinaryFundEntity?>(null) }
     var editingFund by remember { mutableStateOf<ExtraordinaryFundEntity?>(null) }
+    var fundToDelete by remember { mutableStateOf<ExtraordinaryFundEntity?>(null) }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -101,7 +102,8 @@ fun ExtraordinaryFundsSection(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Box(
                     modifier = Modifier
@@ -131,12 +133,14 @@ fun ExtraordinaryFundsSection(
                 }
             }
 
+            Spacer(modifier = Modifier.width(4.dp))
+
             TextButton(
                 onClick = { showCreateFundDialog = true }
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Nuevo Fondo", fontWeight = FontWeight.Bold)
+                Text("Nuevo Fondo", fontWeight = FontWeight.Bold, maxLines = 1, fontSize = 12.sp)
             }
         }
 
@@ -182,10 +186,36 @@ fun ExtraordinaryFundsSection(
                     currencySymbol = currencySymbol,
                     onManageAllocations = { selectedFundForDetail = fund },
                     onEdit = { editingFund = fund },
-                    onDelete = { onDeleteFund(fund) }
+                    onDelete = { fundToDelete = fund }
                 )
             }
         }
+    }
+
+    // Delete Confirmation Dialog for Extraordinary Fund
+    fundToDelete?.let { fund ->
+        AlertDialog(
+            onDismissRequest = { fundToDelete = null },
+            title = { Text("¿Eliminar ingreso extraordinario?", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Estás seguro de que deseas eliminar permanentemente el fondo '${fund.title}' y sus asignaciones?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteFund(fund)
+                        fundToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { fundToDelete = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     // Add Fund Dialog
@@ -401,6 +431,7 @@ fun ExtraordinaryFundDetailDialog(
 
     var showAddAllocationDialog by remember { mutableStateOf(false) }
     var editingAllocation by remember { mutableStateOf<FundAllocation?>(null) }
+    var allocationToDelete by remember { mutableStateOf<FundAllocation?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -521,7 +552,7 @@ fun ExtraordinaryFundDetailDialog(
                                 alloc = alloc,
                                 currencySymbol = currencySymbol,
                                 onEdit = { editingAllocation = alloc },
-                                onDelete = { onDeleteAllocation(alloc.id) }
+                                onDelete = { allocationToDelete = alloc }
                             )
                         }
                     }
@@ -538,6 +569,31 @@ fun ExtraordinaryFundDetailDialog(
                 }
             }
         }
+    }
+
+    allocationToDelete?.let { alloc ->
+        AlertDialog(
+            onDismissRequest = { allocationToDelete = null },
+            title = { Text("¿Eliminar asignación?", fontWeight = FontWeight.Bold) },
+            text = { Text("¿Estás seguro de que deseas eliminar la asignación '${alloc.title}'?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteAllocation(alloc.id)
+                        allocationToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { allocationToDelete = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     // Add Allocation Dialog

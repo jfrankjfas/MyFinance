@@ -14,5 +14,7 @@ data class ScheduledExpenseEntity(
     val notifyReminder: Boolean = true,
     val attachmentUri: String? = null,
     val note: String = "",
-    val isEmergencyPriority: Boolean = false // Gasto vital / prioritario
+    val isEmergencyPriority: Boolean = false, // Gasto vital / prioritario
+    val isRecurringMonthly: Boolean = false, // Recurrente cada mes
+    val currency: String = "C$"
 )

@@ -1,8 +1,10 @@
 package com.example.notification
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
@@ -14,10 +16,10 @@ import com.example.R
 object NotificationHelper {
 
     private const val TAG = "NotificationHelper"
-    private const val CHANNEL_ID = "finanzas_clara_budget_alerts"
+    private const val CHANNEL_ID = "finanzas_clara_budget_alerts_v3"
     private const val CHANNEL_NAME = "Alertas de Presupuesto"
 
-    private const val PAYMENT_CHANNEL_ID = "finanzas_clara_payment_reminders"
+    private const val PAYMENT_CHANNEL_ID = "finanzas_clara_payment_reminders_v3"
     private const val PAYMENT_CHANNEL_NAME = "Recordatorios de Pago y Vencimientos"
 
     fun createNotificationChannel(context: Context) {
@@ -28,21 +30,29 @@ object NotificationHelper {
             val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val audioAttributes = AudioAttributes.Builder()
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
                 .build()
 
+            val vibrationPattern = longArrayOf(0, 400, 200, 400, 200, 400)
+
             val budgetChannel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Notificaciones automáticas cuando tus gastos exceden el presupuesto configurado."
+                description = "Notificaciones automáticas con sonido cuando tus gastos exceden el presupuesto configurado."
                 enableVibration(true)
                 enableLights(true)
+                setVibrationPattern(vibrationPattern)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setShowBadge(true)
                 setSound(defaultSoundUri, audioAttributes)
             }
             notificationManager.createNotificationChannel(budgetChannel)
 
             val paymentChannel = NotificationChannel(PAYMENT_CHANNEL_ID, PAYMENT_CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Alertas programadas 2 días antes, 1 día antes y el día del vencimiento de tus pagos."
+                description = "Alertas sonoras y visuales programadas 2 días antes, 1 día antes y el día del vencimiento de tus pagos."
                 enableVibration(true)
                 enableLights(true)
+                setVibrationPattern(vibrationPattern)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setShowBadge(true)
                 setSound(defaultSoundUri, audioAttributes)
             }
             notificationManager.createNotificationChannel(paymentChannel)
@@ -53,6 +63,23 @@ object NotificationHelper {
         return NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
+    private fun getAppIconBitmap(context: Context): android.graphics.Bitmap? {
+        return try {
+            val drawable = androidx.core.content.ContextCompat.getDrawable(context, R.mipmap.ic_launcher) ?: return null
+            val bitmap = android.graphics.Bitmap.createBitmap(
+                drawable.intrinsicWidth.takeIf { it > 0 } ?: 128,
+                drawable.intrinsicHeight.takeIf { it > 0 } ?: 128,
+                android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bitmap)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            bitmap
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun sendTestNotification(context: Context, currencySymbol: String): Boolean {
         createNotificationChannel(context)
         if (!areNotificationsEnabled(context)) {
@@ -61,22 +88,24 @@ object NotificationHelper {
         }
 
         try {
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
             val title = "🔔 Finanzas Claras: ¡Notificaciones Activas!"
-            val message = "Tus alertas de presupuesto y recordatorios de pago están configurados correctamente. Moneda: $currencySymbol"
+            val message = "Tus alertas de presupuesto y recordatorios de pago están configurados correctamente con sonido y vibración. Moneda activa: $currencySymbol"
 
             val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val largeIcon = getAppIconBitmap(context)
+
             val builder = NotificationCompat.Builder(context, PAYMENT_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_notification)
+                .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
                 .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setColor(0xFF10B981.toInt()) // Primary emerald
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setSound(defaultSoundUri)
-                .setVibrate(longArrayOf(0, 300, 200, 300))
+                .setVibrate(longArrayOf(0, 400, 200, 400, 200, 400))
                 .setAutoCancel(true)
 
             NotificationManagerCompat.from(context).notify(9999, builder.build())
@@ -101,9 +130,6 @@ object NotificationHelper {
         if (!areNotificationsEnabled(context)) return
 
         try {
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
             val title = if (percent >= 100) {
                 "🚨 Presupuesto Excedido: $category"
             } else {
@@ -111,19 +137,25 @@ object NotificationHelper {
             }
 
             val message = if (percent >= 100) {
-                "¡Atención! Has gastado ${String.format("%.2f", spentAmount)} de tu límite de ${String.format("%.2f", limitAmount)} ($percent%)."
+                "¡Atención! Has gastado ${String.format("%.2f", spentAmount)} de tu límite de ${String.format("%.2f", limitAmount)} ($percent%). Ajusta tus gastos de inmediato."
             } else {
                 "Llevas gastado el $percent% de tu presupuesto de $category (${String.format("%.2f", spentAmount)} de ${String.format("%.2f", limitAmount)})."
             }
 
             val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val largeIcon = getAppIconBitmap(context)
+
             val builder = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_notification)
+                .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
                 .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setColor(if (percent >= 100) 0xFFEF4444.toInt() else 0xFFF59E0B.toInt())
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setSound(defaultSoundUri)
+                .setVibrate(longArrayOf(0, 500, 200, 500))
                 .setAutoCancel(true)
 
             val notificationId = (category.hashCode() + percent)
@@ -143,20 +175,23 @@ object NotificationHelper {
         if (!areNotificationsEnabled(context)) return
 
         try {
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
             val notifTitle = "⏰ Recordatorio de Pago Pendiente: $title"
             val message = "Recuerda que tienes programado un pago de $amountFormatted por '$title' que vence $dueDateText."
 
             val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val largeIcon = getAppIconBitmap(context)
+
             val builder = NotificationCompat.Builder(context, PAYMENT_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_notification)
+                .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
                 .setContentTitle(notifTitle)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setColor(0xFF10B981.toInt())
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setSound(defaultSoundUri)
+                .setVibrate(longArrayOf(0, 400, 200, 400))
                 .setAutoCancel(true)
 
             val notificationId = (title.hashCode() + (System.currentTimeMillis() % 10000).toInt())
@@ -193,15 +228,20 @@ object NotificationHelper {
             }
 
             val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val largeIcon = getAppIconBitmap(context)
+
             val builder = NotificationCompat.Builder(context, PAYMENT_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_notification)
+                .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
                 .setContentTitle(notifTitle)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setColor(if (daysRemaining <= 1) 0xFFEF4444.toInt() else 0xFFF59E0B.toInt())
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setSound(defaultSoundUri)
-                .setVibrate(longArrayOf(0, 400, 200, 400))
+                .setVibrate(longArrayOf(0, 500, 200, 500, 200, 500))
                 .setAutoCancel(true)
 
             val notificationId = ("payment_${title}_$daysRemaining".hashCode())

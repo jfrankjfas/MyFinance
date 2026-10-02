@@ -445,10 +445,10 @@ class AppUpdateManager(private val context: Context) {
                 @Suppress("DEPRECATION")
                 installedPackageInfo.versionCode.toLong()
             }
-            if (downloadedVerCode <= installedVerCode) {
+            if (downloadedVerCode < installedVerCode) {
                 val downloadedName = archiveInfo.versionName ?: "v$downloadedVerCode"
                 val installedName = installedPackageInfo.versionName ?: "v$installedVerCode"
-                throw Exception("La versión descargada ($downloadedName, build $downloadedVerCode) es igual o menor a la instalada ($installedName, build $installedVerCode).\n\nAndroid bloquea la instalación de versiones anteriores ('el paquete no es válido'). Para actualizar, asegúrate de subir la nueva versión a GitHub Releases.")
+                throw Exception("La versión descargada ($downloadedName, build $downloadedVerCode) es menor a la instalada ($installedName, build $installedVerCode).\n\nAndroid bloquea la instalación de versiones anteriores ('el paquete no es válido'). Para actualizar, asegúrate de subir la nueva versión a GitHub Releases.")
             }
 
             val apkUri: Uri = FileProvider.getUriForFile(

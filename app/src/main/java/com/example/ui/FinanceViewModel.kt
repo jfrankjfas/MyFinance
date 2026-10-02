@@ -512,9 +512,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     init {
         repository.bindFirebaseManager(firebaseManager)
         // Ensure Firestore cloud version metadata is set to v1.7 for all active devices
+        // Ensure Firestore cloud version metadata is set to v1.8 for all active devices
         repository.publishVersionToCloud(
-            version = "1.7",
-            notes = "Versión 1.7: Título actualizado a Finanzas Claras, optimizador de descarga APK, Pull-to-Refresh y estabilidad multimoneda.",
+            version = "1.8",
+            notes = "Versión 1.8: Corrección en presupuestos multimoneda, pre-cierre y cierre formal de estados de cuenta, 3 temas (Claro, Oscuro, Elegante), gastos programados recurrentes mensuales y confirmación con ✅.",
             apkUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/FinanzasClara-v1.2.apk"
         )
         viewModelScope.launch {
@@ -561,8 +562,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun publishNewVersionToCloud(
-        version: String = "1.7",
-        notes: String = "Versión 1.7: Título actualizado a Finanzas Claras, optimizador de descarga APK, Pull-to-Refresh y estabilidad multimoneda.",
+        version: String = "1.8",
+        notes: String = "Versión 1.8: Corrección en presupuestos multimoneda, pre-cierre y cierre formal de estados de cuenta, 3 temas (Claro, Oscuro, Elegante), gastos programados recurrentes mensuales y confirmación con ✅.",
         apkUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/FinanzasClara-v1.2.apk"
     ) {
         repository.publishVersionToCloud(version, notes, apkUrl)
@@ -924,7 +925,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 val id = repository.addScheduledExpense(scheduled)
                 val scheduledWithId = scheduled.copy(id = id)
                 PaymentAlarmScheduler.schedulePaymentReminders(getApplication(), scheduledWithId, uiState.value.currencySymbol)
-                _importMessage.value = "⏰ Pago calendarizado. Te notificaremos 2 días y 1 día antes del vencimiento."
+                _importMessage.value = "✅ Registro confirmado: $title. ⏰ Pago calendarizado y recordatorios activados."
+            } else {
+                _importMessage.value = "✅ Registro confirmado: $title."
             }
 
             checkBudgetAlertsAndNotify(category, baseAmount, type)
@@ -984,6 +987,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     alertThresholdPercent = thresholdPercent
                 )
             )
+            val label = if (category == "GENERAL") "Presupuesto General" else category
+            _importMessage.value = "✅ Presupuesto confirmado para $label."
+        }
+    }
+
+    fun deleteBudget(category: String) {
+        viewModelScope.launch {
+            repository.deleteBudgetByCategory(category)
+            _importMessage.value = "🗑️ Presupuesto de $category eliminado."
         }
     }
 
@@ -1052,7 +1064,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         notifyReminder: Boolean,
         attachmentUri: String? = null,
         note: String = "",
-        isEmergencyPriority: Boolean = false
+        isEmergencyPriority: Boolean = false,
+        isRecurringMonthly: Boolean = false
     ) {
         viewModelScope.launch {
             val baseAmount = convertToCordobas(amount)
@@ -1066,7 +1079,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 notifyReminder = notifyReminder,
                 attachmentUri = attachmentUri,
                 note = note,
-                isEmergencyPriority = isEmergencyPriority
+                isEmergencyPriority = isEmergencyPriority,
+                isRecurringMonthly = isRecurringMonthly,
+                currency = "C$"
             )
             val id = repository.addScheduledExpense(entity)
             val entityWithId = entity.copy(id = id)
@@ -1074,8 +1089,48 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             if (notifyReminder) {
                 PaymentAlarmScheduler.schedulePaymentReminders(getApplication(), entityWithId, uiState.value.currencySymbol)
                 val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                _importMessage.value = "⏰ Recordatorio activado: Notificaciones automáticas 2 días y 1 día antes del vencimiento (${sdf.format(Date(dueDate))})."
+                _importMessage.value = "✅ Gasto programado confirmado: $title. ⏰ Recordatorio activado (${sdf.format(Date(dueDate))})."
+            } else {
+                _importMessage.value = "✅ Gasto programado confirmado: $title."
             }
+        }
+    }
+
+    fun updateScheduledExpense(
+        id: Long,
+        title: String,
+        amount: Double,
+        category: String,
+        dueDate: Long,
+        notifyReminder: Boolean,
+        attachmentUri: String? = null,
+        note: String = "",
+        isEmergencyPriority: Boolean = false,
+        isRecurringMonthly: Boolean = false
+    ) {
+        viewModelScope.launch {
+            val baseAmount = convertToCordobas(amount)
+            val entity = ScheduledExpenseEntity(
+                id = id,
+                title = title,
+                amount = baseAmount,
+                category = category,
+                dueDate = dueDate,
+                isPaid = false,
+                notifyReminder = notifyReminder,
+                attachmentUri = attachmentUri,
+                note = note,
+                isEmergencyPriority = isEmergencyPriority,
+                isRecurringMonthly = isRecurringMonthly,
+                currency = "C$"
+            )
+            repository.updateScheduledExpense(entity)
+            if (notifyReminder) {
+                PaymentAlarmScheduler.schedulePaymentReminders(getApplication(), entity, uiState.value.currencySymbol)
+            } else {
+                PaymentAlarmScheduler.cancelPaymentReminders(getApplication(), id)
+            }
+            _importMessage.value = "✅ Gasto programado actualizado: $title."
         }
     }
 
@@ -1096,6 +1151,31 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             )
             repository.addTransaction(newTx)
 
+            // If it's recurring monthly, schedule next month's payment!
+            if (expense.isRecurringMonthly) {
+                val nextCal = Calendar.getInstance().apply {
+                    timeInMillis = expense.dueDate
+                    add(Calendar.MONTH, 1)
+                }
+                val nextExpense = ScheduledExpenseEntity(
+                    title = expense.title,
+                    amount = expense.amount,
+                    category = expense.category,
+                    dueDate = nextCal.timeInMillis,
+                    isPaid = false,
+                    notifyReminder = expense.notifyReminder,
+                    attachmentUri = expense.attachmentUri,
+                    note = expense.note,
+                    isEmergencyPriority = expense.isEmergencyPriority,
+                    isRecurringMonthly = true,
+                    currency = expense.currency
+                )
+                val nextId = repository.addScheduledExpense(nextExpense)
+                if (nextExpense.notifyReminder) {
+                    PaymentAlarmScheduler.schedulePaymentReminders(getApplication(), nextExpense.copy(id = nextId), uiState.value.currencySymbol)
+                }
+            }
+
             NotificationHelper.sendBudgetAlertNotification(
                 context = getApplication(),
                 category = expense.category,
@@ -1103,6 +1183,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 limitAmount = expense.amount,
                 percent = 100
             )
+            _importMessage.value = "✅ Pago registrado con éxito." + if (expense.isRecurringMonthly) " 🔁 Se programó automáticamente el siguiente pago para el próximo mes." else ""
         }
     }
 
@@ -1110,6 +1191,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             PaymentAlarmScheduler.cancelPaymentReminders(getApplication(), expense.id)
             repository.deleteScheduledExpense(expense)
+            _importMessage.value = "🗑️ Gasto programado '${expense.title}' eliminado."
         }
     }
 
@@ -1188,6 +1270,115 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val cal2 = Calendar.getInstance().apply { timeInMillis = t2 }
         return cal1.get(Calendar.YEAR) == cal2.get(Calendar.YEAR) &&
                 cal1.get(Calendar.MONTH) == cal2.get(Calendar.MONTH)
+    }
+
+    fun archiveAndClosePeriod(
+        customTitle: String = "",
+        note: String = "",
+        periodMode: String = uiState.value.budgetPeriodMode,
+        startTimestamp: Long? = null,
+        endTimestamp: Long? = null,
+        clearPeriodData: Boolean = true,
+        closePermanently: Boolean = true
+    ) {
+        viewModelScope.launch {
+            val state = uiState.value
+            val sdfMonth = SimpleDateFormat("MMMM yyyy", Locale("es", "ES"))
+            val monthStr = sdfMonth.format(Date()).replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("es", "ES")) else it.toString() }
+
+            val periodLabel = when (periodMode) {
+                "FORTNIGHT_1" -> "1ª Quincena ($monthStr)"
+                "FORTNIGHT_2" -> "2ª Quincena ($monthStr)"
+                "CUSTOM" -> if (startTimestamp != null && endTimestamp != null) {
+                    val sdfShort = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+                    "${sdfShort.format(Date(startTimestamp))} - ${sdfShort.format(Date(endTimestamp))}"
+                } else "Periodo Personalizado"
+                else -> "Mes de $monthStr"
+            }
+
+            val finalTitle = customTitle.ifBlank { "Estado de Cuenta - $periodLabel" }
+
+            val periodTxs = state.transactions.filter { tx ->
+                if (startTimestamp != null && endTimestamp != null) {
+                    tx.timestamp in startTimestamp..endTimestamp
+                } else {
+                    isTimestampInPeriod(tx.timestamp, periodMode)
+                }
+            }
+
+            val txArray = JSONArray()
+            var spentSum = 0.0
+            periodTxs.forEach { tx ->
+                val obj = JSONObject().apply {
+                    put("title", tx.title)
+                    put("amount", tx.amount)
+                    put("category", tx.category)
+                    put("type", tx.type)
+                    put("timestamp", tx.timestamp)
+                    put("note", tx.note)
+                }
+                txArray.put(obj)
+                if (tx.type == "EXPENSE") {
+                    spentSum += tx.amount
+                }
+            }
+
+            val schedArray = JSONArray()
+            val periodScheduled = state.scheduledExpenses.filter { s ->
+                if (startTimestamp != null && endTimestamp != null) {
+                    s.dueDate in startTimestamp..endTimestamp
+                } else {
+                    isTimestampInPeriod(s.dueDate, periodMode)
+                }
+            }
+            var schedSum = 0.0
+            periodScheduled.forEach { s ->
+                val obj = JSONObject().apply {
+                    put("title", s.title)
+                    put("amount", s.amount)
+                    put("category", s.category)
+                    put("dueDate", s.dueDate)
+                    put("isPaid", s.isPaid)
+                }
+                schedArray.put(obj)
+                if (!s.isPaid) {
+                    schedSum += s.amount
+                }
+            }
+
+            val entity = ArchivedPeriodEntity(
+                id = 0,
+                title = finalTitle,
+                periodMode = periodMode,
+                archivedAt = System.currentTimeMillis(),
+                budgetLimit = state.periodBudgetLimitTotal,
+                totalSpent = spentSum,
+                totalScheduled = schedSum,
+                currencySymbol = state.currencySymbol,
+                note = note,
+                transactionsJson = txArray.toString(),
+                scheduledJson = schedArray.toString(),
+                isClosed = closePermanently
+            )
+
+            repository.archivePeriod(entity)
+
+            if (clearPeriodData) {
+                periodTxs.forEach { repository.deleteTransaction(it) }
+                periodScheduled.forEach { repository.deleteScheduledExpense(it) }
+                _importMessage.value = if (closePermanently) {
+                    "🔒 ¡Estado de Cuenta cerrado oficialmente! El periodo ha quedado sellado sin permitir cambios y los registros activos se reiniciaron a cero."
+                } else {
+                    "✅ ¡Periodo respaldado y limpiado! Transacciones guardadas en Estado de Cuenta."
+                }
+            } else {
+                _importMessage.value = if (closePermanently) {
+                    "🔒 ¡Estado de Cuenta cerrado oficialmente! Ha quedado sellado como documento inmutable."
+                } else {
+                    "✅ ¡Periodo respaldado con éxito! Se guardó tu Estado de Cuenta en el Archivo Histórico."
+                }
+            }
+        }
     }
 
     fun archiveCurrentPeriod(customTitle: String = "", note: String = "", clearPeriodData: Boolean = true) {
@@ -1394,7 +1585,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 note = note
             )
             repository.addExtraordinaryFund(fund)
-            _importMessage.value = "⭐ Presupuesto de Ingreso Extraordinario registrado (Base C$)."
+            _importMessage.value = "✅ Ingreso Extraordinario confirmado: $title."
         }
     }
 
@@ -1417,7 +1608,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
             repository.updateExtraordinaryFund(updated)
-            _importMessage.value = "✏️ Ingreso Extraordinario actualizado."
+            _importMessage.value = "✅ Ingreso Extraordinario actualizado: ${fund.title}."
         }
     }
 
@@ -1447,7 +1638,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
             val updated = fund.copy(allocationsJson = jsonArray.toString())
             repository.updateExtraordinaryFund(updated)
-            _importMessage.value = "🎯 Asignación agregada al Ingreso Extraordinario."
+            _importMessage.value = "✅ Asignación confirmada: $allocationTitle."
         }
     }
 

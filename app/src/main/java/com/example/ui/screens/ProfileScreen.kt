@@ -320,7 +320,7 @@ fun ProfileScreen(
                         val themes = listOf(
                             Triple("LIGHT", "Claro", Icons.Default.WbSunny),
                             Triple("DARK", "Oscuro", Icons.Default.DarkMode),
-                            Triple("SYSTEM", "Sistema", Icons.Default.PhoneAndroid)
+                            Triple("ELEGANT", "Elegante", Icons.Default.Security)
                         )
 
                         themes.forEach { (code, label, icon) ->

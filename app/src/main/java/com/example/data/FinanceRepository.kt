@@ -144,6 +144,11 @@ class FinanceRepository(
         firebaseManager?.saveBudgetToCloud(budget)
     }
 
+    suspend fun deleteBudgetByCategory(category: String) {
+        budgetDao.deleteBudgetByCategory(category)
+        firebaseManager?.deleteBudgetFromCloud(category)
+    }
+
     suspend fun addScheduledExpense(expense: ScheduledExpenseEntity): Long {
         val id = scheduledExpenseDao.insertScheduledExpense(expense)
         val expWithId = if (expense.id == 0L) expense.copy(id = id) else expense

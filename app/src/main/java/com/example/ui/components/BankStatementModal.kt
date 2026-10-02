@@ -76,6 +76,18 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import java.util.Calendar
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArchiveConfirmDialog(
@@ -85,140 +97,379 @@ fun ArchiveConfirmDialog(
     scheduledTotal: Double,
     currencySymbol: String,
     onDismiss: () -> Unit,
-    onConfirm: (customTitle: String, note: String, clearPeriodData: Boolean) -> Unit
+    onConfirm: (
+        customTitle: String,
+        note: String,
+        selectedPeriod: String,
+        startDateMs: Long?,
+        endDateMs: Long?,
+        clearPeriodData: Boolean,
+        closePermanently: Boolean
+    ) -> Unit
 ) {
+    val context = LocalContext.current
     val sdfMonth = SimpleDateFormat("MMMM yyyy", Locale("es", "ES"))
     val monthStr = sdfMonth.format(Date()).replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("es", "ES")) else it.toString() }
 
-    val defaultTitle = when (periodMode) {
-        "FORTNIGHT_1" -> "Estado de Cuenta - 1ª Quincena ($monthStr)"
-        "FORTNIGHT_2" -> "Estado de Cuenta - 2ª Quincena ($monthStr)"
-        else -> "Estado de Cuenta - Mes de $monthStr"
+    var selectedPeriodMode by remember { mutableStateOf(periodMode) }
+    var currentStep by remember { mutableIntStateOf(1) } // 1: Setup & Pre-close, 2: Review & Final Lock
+
+    val calNow = Calendar.getInstance()
+    val maxDays = calNow.getActualMaximum(Calendar.DAY_OF_MONTH)
+    val curYear = calNow.get(Calendar.YEAR)
+    val curMonth = calNow.get(Calendar.MONTH)
+
+    val defaultStartMs = remember(selectedPeriodMode) {
+        val c = Calendar.getInstance().apply {
+            set(Calendar.YEAR, curYear)
+            set(Calendar.MONTH, curMonth)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            when (selectedPeriodMode) {
+                "FORTNIGHT_2" -> set(Calendar.DAY_OF_MONTH, 16)
+                else -> set(Calendar.DAY_OF_MONTH, 1)
+            }
+        }
+        c.timeInMillis
     }
 
-    var titleInput by remember { mutableStateOf(defaultTitle) }
+    val defaultEndMs = remember(selectedPeriodMode) {
+        val c = Calendar.getInstance().apply {
+            set(Calendar.YEAR, curYear)
+            set(Calendar.MONTH, curMonth)
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+            when (selectedPeriodMode) {
+                "FORTNIGHT_1" -> set(Calendar.DAY_OF_MONTH, 15)
+                else -> set(Calendar.DAY_OF_MONTH, maxDays)
+            }
+        }
+        c.timeInMillis
+    }
+
+    var customStartDateMs by remember { mutableLongStateOf(defaultStartMs) }
+    var customEndDateMs by remember { mutableLongStateOf(defaultEndMs) }
+
+    val sdfDateOnly = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+
+    val defaultTitle = remember(selectedPeriodMode, customStartDateMs, customEndDateMs) {
+        when (selectedPeriodMode) {
+            "FORTNIGHT_1" -> "Estado de Cuenta - 1ª Quincena ($monthStr)"
+            "FORTNIGHT_2" -> "Estado de Cuenta - 2ª Quincena ($monthStr)"
+            "CUSTOM" -> "Estado de Cuenta (${sdfDateOnly.format(Date(customStartDateMs))} - ${sdfDateOnly.format(Date(customEndDateMs))})"
+            else -> "Estado de Cuenta - Mes de $monthStr"
+        }
+    }
+
+    var titleInput by remember(defaultTitle) { mutableStateOf(defaultTitle) }
     var noteInput by remember { mutableStateOf("") }
     var clearPeriodData by remember { mutableStateOf(true) }
+
+    fun pickCustomDate(isStart: Boolean) {
+        val initialMs = if (isStart) customStartDateMs else customEndDateMs
+        val c = Calendar.getInstance().apply { timeInMillis = initialMs }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val newC = Calendar.getInstance().apply {
+                    clear()
+                    set(year, month, dayOfMonth, if (isStart) 0 else 23, if (isStart) 0 else 59, if (isStart) 0 else 59)
+                }
+                if (isStart) customStartDateMs = newC.timeInMillis else customEndDateMs = newC.timeInMillis
+            },
+            c.get(Calendar.YEAR),
+            c.get(Calendar.MONTH),
+            c.get(Calendar.DAY_OF_MONTH)
+        ).show()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
             Icon(
-                imageVector = Icons.Default.Archive,
+                imageVector = if (currentStep == 1) Icons.Default.Archive else Icons.Default.Lock,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
+                tint = if (currentStep == 1) MaterialTheme.colorScheme.primary else Color(0xFFD32F2F),
+                modifier = Modifier.size(34.dp)
             )
         },
         title = {
-            Text(
-                text = "Finalizar y Respaldar Periodo",
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp
-            )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Este proceso creará un Estado de Cuenta Oficial guardado en tu archivo histórico con todas las transacciones y presupuestos del periodo.",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = if (currentStep == 1) "1️⃣ Definir Periodo (Pre-Cierre)" else "2️⃣ Revisión y Cierre Definitivo",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Text(
+                    text = if (currentStep == 1) "Paso 1 de 2: Elige el periodo para el Estado de Cuenta" else "Paso 2 de 2: Revisa antes del sellado inmutable",
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (currentStep == 1) {
+                    // --- STEP 1: SELECT PERIOD & DATES ---
+                    Text(
+                        text = "Selecciona el periodo que deseas cerrar o define fechas específicas para tu Estado de Cuenta Oficial:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                // Summary Box
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    // Period Selection Chips
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Presupuesto Asignado:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("$currencySymbol${String.format(Locale.US, "%.2f", budgetLimit)}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            FilterChip(
+                                selected = selectedPeriodMode == "MONTHLY",
+                                onClick = { selectedPeriodMode = "MONTHLY" },
+                                label = { Text("Mensual", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = selectedPeriodMode == "FORTNIGHT_1",
+                                onClick = { selectedPeriodMode = "FORTNIGHT_1" },
+                                label = { Text("1ª Quincena", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = selectedPeriodMode == "FORTNIGHT_2",
+                                onClick = { selectedPeriodMode = "FORTNIGHT_2" },
+                                label = { Text("2ª Quincena", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
+
+                        FilterChip(
+                            selected = selectedPeriodMode == "CUSTOM",
+                            onClick = { selectedPeriodMode = "CUSTOM" },
+                            label = { Text("📅 Rango de Fechas Personalizado", fontSize = 12.sp) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    // Custom Date Pickers if selected
+                    if (selectedPeriodMode == "CUSTOM") {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Gasto Real Ejecutado:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("$currencySymbol${String.format(Locale.US, "%.2f", spentTotal)}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD32F2F))
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Pagos Programados:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("$currencySymbol${String.format(Locale.US, "%.2f", scheduledTotal)}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            OutlinedTextField(
+                                value = sdfDateOnly.format(Date(customStartDateMs)),
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Desde", fontSize = 11.sp) },
+                                trailingIcon = {
+                                    IconButton(onClick = { pickCustomDate(true) }) {
+                                        Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = sdfDateOnly.format(Date(customEndDateMs)),
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Hasta", fontSize = 11.sp) },
+                                trailingIcon = {
+                                    IconButton(onClick = { pickCustomDate(false) }) {
+                                        Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
-                }
 
-                OutlinedTextField(
-                    value = titleInput,
-                    onValueChange = { titleInput = it },
-                    label = { Text("Nombre del Estado de Cuenta") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    // Summary Preview Card
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Presupuesto Asignado:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$currencySymbol${String.format(Locale.US, "%.2f", budgetLimit)}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Gasto Ejecutado:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$currencySymbol${String.format(Locale.US, "%.2f", spentTotal)}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD32F2F))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Pagos Programados:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$currencySymbol${String.format(Locale.US, "%.2f", scheduledTotal)}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
 
-                OutlinedTextField(
-                    value = noteInput,
-                    onValueChange = { noteInput = it },
-                    label = { Text("Notas u observaciones (Opcional)") },
-                    maxLines = 2,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // Clear / Reset Period Checkbox Option
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { clearPeriodData = !clearPeriodData }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = clearPeriodData,
-                        onCheckedChange = { clearPeriodData = it }
+                    OutlinedTextField(
+                        value = titleInput,
+                        onValueChange = { titleInput = it },
+                        label = { Text("Nombre del Estado de Cuenta") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Column {
-                        Text(
-                            text = "Limpiar transacciones del periodo respaldado",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
+
+                    OutlinedTextField(
+                        value = noteInput,
+                        onValueChange = { noteInput = it },
+                        label = { Text("Notas u observaciones (Opcional)") },
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    // --- STEP 2: PRE-CIERRE REVIEW & FINAL CONFIRMATION ---
+                    Surface(
+                        color = Color(0xFFFFF9C4),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Visibility, contentDescription = null, tint = Color(0xFFF57F17), modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "🟡 MODO PRE-CIERRE (Revisión Final)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color(0xFFF57F17)
+                            )
+                        }
+                    }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("📄 $titleInput", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("📅 Periodo: ${sdfDateOnly.format(Date(if (selectedPeriodMode == "CUSTOM") customStartDateMs else defaultStartMs))} al ${sdfDateOnly.format(Date(if (selectedPeriodMode == "CUSTOM") customEndDateMs else defaultEndMs))}", fontSize = 12.sp)
+                            Divider()
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Total Gastado:", fontSize = 12.sp)
+                                Text("$currencySymbol${String.format(Locale.US, "%.2f", spentTotal)}", fontWeight = FontWeight.Bold, color = Color(0xFFD32F2F))
+                            }
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Compromisos Programados:", fontSize = 12.sp)
+                                Text("$currencySymbol${String.format(Locale.US, "%.2f", scheduledTotal)}", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "🔒 Al dar el Cierre Definitivo, este Estado de Cuenta quedará sellado e inmutable. Ya no permitirá editar ni eliminar movimientos de este periodo.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    // Reset / Clear Checkbox
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { clearPeriodData = !clearPeriodData }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = clearPeriodData,
+                            onCheckedChange = { clearPeriodData = it }
                         )
-                        Text(
-                            text = "Reinicia los gastos e ingresos activos para iniciar un nuevo periodo en cero. El respaldo guardado mantendrá todo tu detalle intacto.",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text(
+                                text = "Limpiar transacciones activas para nuevo periodo",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Reinicia los gastos activos a cero. El Estado de Cuenta guardará todo tu detalle respaldado.",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onConfirm(titleInput, noteInput, clearPeriodData) },
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Icon(Icons.Default.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Respaldar Ahora")
+            if (currentStep == 1) {
+                Button(
+                    onClick = { currentStep = 2 },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Revisar Pre-Cierre ➡️")
+                }
+            } else {
+                Button(
+                    onClick = {
+                        val sMs = if (selectedPeriodMode == "CUSTOM") customStartDateMs else defaultStartMs
+                        val eMs = if (selectedPeriodMode == "CUSTOM") customEndDateMs else defaultEndMs
+                        onConfirm(titleInput, noteInput, selectedPeriodMode, sMs, eMs, clearPeriodData, true)
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("🔒 Cierre Definitivo")
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancelar")
+            if (currentStep == 1) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancelar")
+                }
+            } else {
+                TextButton(onClick = { currentStep = 1 }) {
+                    Text("⬅️ Volver a Ajustar")
+                }
             }
         }
     )

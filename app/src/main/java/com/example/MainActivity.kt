@@ -70,6 +70,7 @@ import com.example.ui.screens.BackupScreen
 import com.example.ui.screens.BudgetScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.FinanzasClaraTheme
 import com.example.ui.theme.PrimaryEmerald
 
@@ -93,12 +94,13 @@ class MainActivity : FragmentActivity() {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
             val isLocked by securityManager.isLocked.collectAsStateWithLifecycle()
 
-            val isDark = when (uiState.appTheme) {
-                "LIGHT" -> false
-                "DARK" -> true
-                else -> isSystemInDarkTheme()
+            val currentThemeMode = when (uiState.appTheme.uppercase()) {
+                "LIGHT", "CLARO" -> AppThemeMode.LIGHT
+                "ELEGANT", "ELEGANTE" -> AppThemeMode.ELEGANT
+                "DARK", "OSCURO" -> AppThemeMode.DARK
+                else -> if (isSystemInDarkTheme()) AppThemeMode.DARK else AppThemeMode.LIGHT
             }
-            FinanzasClaraTheme(darkTheme = isDark) {
+            FinanzasClaraTheme(themeMode = currentThemeMode) {
                 if (!uiState.isLoggedIn || uiState.userEmail.isBlank()) {
                     com.example.ui.screens.LoginScreen(
                         uiState = uiState,
@@ -258,8 +260,11 @@ fun MainAppScreen(
                         onSetBudgetPeriodMode = { mode ->
                             viewModel.setBudgetPeriodMode(mode)
                         },
-                        onAddScheduledExpense = { title, amount, cat, dueDate, notify, attachmentUri, note ->
-                            viewModel.addScheduledExpense(title, amount, cat, dueDate, notify, attachmentUri, note)
+                        onAddScheduledExpense = { title, amount, cat, dueDate, notify, attachmentUri, note, isRecurring ->
+                            viewModel.addScheduledExpense(title, amount, cat, dueDate, notify, attachmentUri, note, isRecurringMonthly = isRecurring)
+                        },
+                        onUpdateScheduledExpense = { id, title, amount, cat, dueDate, notify, attachmentUri, note, isPriority, isRecurring ->
+                            viewModel.updateScheduledExpense(id, title, amount, cat, dueDate, notify, attachmentUri, note, isEmergencyPriority = isPriority, isRecurringMonthly = isRecurring)
                         },
                         onScanReceiptWithDueDate = { uri, onResult ->
                             viewModel.scanReceiptWithDueDate(uri, onResult)
@@ -271,7 +276,10 @@ fun MainAppScreen(
                             viewModel.deleteScheduledExpense(expense)
                         },
                         onArchivePeriod = { title, note, clearPeriodData ->
-                            viewModel.archiveCurrentPeriod(title, note, clearPeriodData)
+                            viewModel.archiveCurrentPeriod(title, note, clearPeriodData = clearPeriodData)
+                        },
+                        onArchiveAndClosePeriod = { title, note, mode, sMs, eMs, clearData, closePerm ->
+                            viewModel.archiveAndClosePeriod(title, note, mode, sMs, eMs, clearData, closePerm)
                         },
                         onDeleteArchivedPeriod = { period ->
                             viewModel.deleteArchivedPeriod(period)

@@ -940,6 +940,15 @@ class FirebaseFinanceManager(
             .set(data, SetOptions.merge())
     }
 
+    fun deleteBudgetFromCloud(category: String) {
+        if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
+        val db = firestore ?: return
+        val docId = "bg_${category.replace("/", "_")}"
+        db.collection("finanzas_users").document(activeUserId)
+            .collection("budgets").document(docId)
+            .delete()
+    }
+
     fun saveScheduledExpenseToCloud(s: ScheduledExpenseEntity) {
         if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
