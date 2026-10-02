@@ -511,10 +511,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         repository.bindFirebaseManager(firebaseManager)
-        // Ensure Firestore cloud version metadata is set to v1.6 for all active devices
+        // Ensure Firestore cloud version metadata is set to v1.7 for all active devices
         repository.publishVersionToCloud(
-            version = "1.6",
-            notes = "Versión 1.6: Corrección y optimización del descargador de actualizaciones APK con verificación de enlaces, Pull-to-Refresh y precisión multimoneda.",
+            version = "1.7",
+            notes = "Versión 1.7: Título actualizado a Finanzas Claras, optimizador de descarga APK, Pull-to-Refresh y estabilidad multimoneda.",
             apkUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/FinanzasClara-v1.2.apk"
         )
         viewModelScope.launch {
@@ -561,8 +561,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun publishNewVersionToCloud(
-        version: String = "1.6",
-        notes: String = "Versión 1.6: Corrección y optimización del descargador de actualizaciones APK con verificación de enlaces, Pull-to-Refresh y precisión multimoneda.",
+        version: String = "1.7",
+        notes: String = "Versión 1.7: Título actualizado a Finanzas Claras, optimizador de descarga APK, Pull-to-Refresh y estabilidad multimoneda.",
         apkUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/FinanzasClara-v1.2.apk"
     ) {
         repository.publishVersionToCloud(version, notes, apkUrl)

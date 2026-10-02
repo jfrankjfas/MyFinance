@@ -188,7 +188,7 @@ fun SecurityLockScreen(
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "Finanzas Clara",
+                text = "Finanzas Claras",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground

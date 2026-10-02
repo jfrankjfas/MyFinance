@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateCard(
-    currentVersion: String = "1.6",
+    currentVersion: String = "1.7",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -74,7 +74,7 @@ fun AppUpdateCard(
 
     val currentVer = remember {
         val installed = updateManager.getInstalledVersionName()
-        if (installed.isNotBlank()) installed else "1.6"
+        if (installed.isNotBlank()) installed else "1.7"
     }
 
     var isChecking by remember { mutableStateOf(false) }
@@ -89,8 +89,8 @@ fun AppUpdateCard(
     var repoInput by remember { mutableStateOf(updateManager.getRepositoryName()) }
 
     var showPublishDialog by remember { mutableStateOf(false) }
-    var publishVersion by remember { mutableStateOf("1.6") }
-    var publishNotes by remember { mutableStateOf("Versión 1.6: Descarga directa de APK optimizada con resolución automática de enlaces, Pull-to-Refresh y precisión multimoneda.") }
+    var publishVersion by remember { mutableStateOf("1.7") }
+    var publishNotes by remember { mutableStateOf("Versión 1.7: Título actualizado a Finanzas Claras, optimizador de descarga APK, Pull-to-Refresh y estabilidad multimoneda.") }
     var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.2/FinanzasClara-v1.2.apk") }
     var isPublishing by remember { mutableStateOf(false) }
 
@@ -544,8 +544,8 @@ fun AppUpdateCard(
                     errorMessage = null
                     updateInfo = UpdateInfo(
                         hasUpdate = true,
-                        latestVersion = "1.7",
-                        releaseNotes = "🧪 Actualización de prueba (v1.7): Verificación completa de descarga e instalación. Descarga el paquete oficial APK y ejecuta el instalador del sistema.",
+                        latestVersion = "1.8",
+                        releaseNotes = "🧪 Actualización de prueba (v1.8): Verificación completa de descarga e instalación para Finanzas Claras. Descarga el paquete oficial APK y ejecuta el instalador del sistema.",
                         apkDownloadUrl = "https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.2/FinanzasClara-v1.2.apk",
                         releaseDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
                     )

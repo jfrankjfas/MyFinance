@@ -132,7 +132,7 @@ class AppSecurityManager(private val context: Context) {
 
     fun showBiometricPrompt(
         activity: FragmentActivity,
-        title: String = "Acceso a Finanzas Clara",
+        title: String = "Acceso a Finanzas Claras",
         subtitle: String = "Usa tu huella dactilar o reconocimiento biométrico",
         onSuccess: () -> Unit,
         onError: (String) -> Unit

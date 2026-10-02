@@ -190,7 +190,7 @@ fun LoginScreen(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Default.Security,
-                        contentDescription = "Logo Finanzas Clara",
+                        contentDescription = "Logo Finanzas Claras",
                         tint = SleekPrimary,
                         modifier = Modifier.size(54.dp)
                     )
@@ -199,20 +199,20 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // App Title with secret backdoor in the last letter 'a'
+            // App Title with secret backdoor in the last letter 's'
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "Finanzas Clar",
+                    text = "Finanzas Clara",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                // Touching the final 'a' reveals the secret direct email input dialog
+                // Touching the final 's' reveals the secret direct email input dialog
                 Text(
-                    text = "a",
+                    text = "s",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,

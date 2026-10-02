@@ -64,7 +64,7 @@ object NotificationHelper {
             val notificationManager =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            val title = "🔔 Finanzas Clara: ¡Notificaciones Activas!"
+            val title = "🔔 Finanzas Claras: ¡Notificaciones Activas!"
             val message = "Tus alertas de presupuesto y recordatorios de pago están configurados correctamente. Moneda: $currencySymbol"
 
             val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)

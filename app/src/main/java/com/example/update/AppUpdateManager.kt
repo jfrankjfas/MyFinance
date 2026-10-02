@@ -242,19 +242,25 @@ class AppUpdateManager(private val context: Context) {
 
         // 2. If it's a GitHub URL, try candidate variations or query existing release assets
         val repo = getRepositoryName()
+        val currentVer = getInstalledVersionName()
         if (initialUrl.contains("github.com", ignoreCase = true)) {
             val candidates = mutableListOf<String>()
             val versionRegex = Regex("""v?(\d+\.\d+)""")
             val match = versionRegex.find(initialUrl)
             if (match != null) {
                 val v = match.groupValues[1]
+                candidates.add("https://github.com/$repo/releases/download/v$v/FinanzasClaras-v$v.apk")
+                candidates.add("https://github.com/$repo/releases/download/v$v/FinanzasClaras.apk")
                 candidates.add("https://github.com/$repo/releases/download/v$v/FinanzasClara-v$v.apk")
                 candidates.add("https://github.com/$repo/releases/download/v$v/FinanzasClara.apk")
                 candidates.add("https://github.com/$repo/releases/download/v$v/app-debug.apk")
+                candidates.add("https://github.com/$repo/releases/download/$v/FinanzasClaras-v$v.apk")
+                candidates.add("https://github.com/$repo/releases/download/$v/FinanzasClaras.apk")
                 candidates.add("https://github.com/$repo/releases/download/$v/FinanzasClara-v$v.apk")
                 candidates.add("https://github.com/$repo/releases/download/$v/FinanzasClara.apk")
                 candidates.add("https://github.com/$repo/releases/download/$v/app-debug.apk")
             }
+            candidates.add("https://github.com/$repo/releases/latest/download/FinanzasClaras.apk")
             candidates.add("https://github.com/$repo/releases/latest/download/FinanzasClara.apk")
             candidates.add("https://github.com/$repo/releases/latest/download/app-debug.apk")
 
@@ -273,7 +279,7 @@ class AppUpdateManager(private val context: Context) {
                 } catch (_: Exception) {}
             }
 
-            // Variation B: Query GitHub Releases API to find ANY real existing APK asset!
+            // Variation B: Query GitHub Releases API to find ANY NEWER release APK asset!
             try {
                 val releasesUrl = "https://api.github.com/repos/$repo/releases"
                 val req = Request.Builder()
@@ -287,6 +293,11 @@ class AppUpdateManager(private val context: Context) {
                     val releases = org.json.JSONArray(body)
                     for (i in 0 until releases.length()) {
                         val rel = releases.getJSONObject(i)
+                        val tagName = rel.optString("tag_name", "").removePrefix("v")
+                        // STRICT CHECK: Only consider releases newer than installed version to avoid downgrades
+                        if (!isNewerVersion(currentVer, tagName)) {
+                            continue
+                        }
                         val assets = rel.optJSONArray("assets")
                         if (assets != null) {
                             for (j in 0 until assets.length()) {
@@ -413,6 +424,33 @@ class AppUpdateManager(private val context: Context) {
 
     private fun installApk(activity: Activity, apkFile: File) {
         try {
+            // Pre-validate APK archive to ensure it is not a downgrade or invalid
+            val archiveInfo = activity.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+            if (archiveInfo == null) {
+                throw Exception("El archivo descargado no es un paquete APK válido o se descargó incompleto.")
+            }
+            if (archiveInfo.packageName != activity.packageName) {
+                throw Exception("El paquete APK (${archiveInfo.packageName}) no coincide con esta aplicación (${activity.packageName}).")
+            }
+            val downloadedVerCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                archiveInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                archiveInfo.versionCode.toLong()
+            }
+            val installedPackageInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
+            val installedVerCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                installedPackageInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                installedPackageInfo.versionCode.toLong()
+            }
+            if (downloadedVerCode <= installedVerCode) {
+                val downloadedName = archiveInfo.versionName ?: "v$downloadedVerCode"
+                val installedName = installedPackageInfo.versionName ?: "v$installedVerCode"
+                throw Exception("La versión descargada ($downloadedName, build $downloadedVerCode) es igual o menor a la instalada ($installedName, build $installedVerCode).\n\nAndroid bloquea la instalación de versiones anteriores ('el paquete no es válido'). Para actualizar, asegúrate de subir la nueva versión a GitHub Releases.")
+            }
+
             val apkUri: Uri = FileProvider.getUriForFile(
                 activity,
                 "${activity.packageName}.provider",
@@ -438,6 +476,7 @@ class AppUpdateManager(private val context: Context) {
             activity.startActivity(installIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch package installer: ${e.message}", e)
+            throw e
         }
     }
 }
