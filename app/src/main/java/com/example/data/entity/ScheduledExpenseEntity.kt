@@ -16,5 +16,8 @@ data class ScheduledExpenseEntity(
     val note: String = "",
     val isEmergencyPriority: Boolean = false, // Gasto vital / prioritario
     val isRecurringMonthly: Boolean = false, // Recurrente cada mes
-    val currency: String = "C$"
+    val currency: String = "C$",
+    val fundingSource: String = "PERIOD_BUDGET", // "PERIOD_BUDGET", "EXTRAORDINARY_FUND", "SAVINGS"
+    val extraordinaryFundId: Long? = null,
+    val extraordinaryFundTitle: String = ""
 )

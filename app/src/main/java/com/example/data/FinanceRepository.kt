@@ -57,8 +57,15 @@ class FinanceRepository(
         }
 
         manager.onRemoteBudgetsReceived = { remoteBudgets ->
-            if (remoteBudgets.isNotEmpty()) {
-                repositoryScope.launch {
+            repositoryScope.launch {
+                val currentLocal = budgetDao.getBudgetsList()
+                val remoteCats = remoteBudgets.map { it.category }.toSet()
+                currentLocal.forEach { local ->
+                    if (local.category !in remoteCats) {
+                        budgetDao.deleteBudgetByCategory(local.category)
+                    }
+                }
+                if (remoteBudgets.isNotEmpty()) {
                     budgetDao.insertAll(remoteBudgets)
                 }
             }

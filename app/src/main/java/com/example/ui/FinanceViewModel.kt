@@ -50,7 +50,9 @@ data class BudgetProgress(
     val pendingAmount: Double = 0.0,
     val percentage: Int,
     val isExceeded: Boolean,
-    val isWarning: Boolean
+    val isWarning: Boolean,
+    val subtitle: String = "",
+    val carryoverNotice: String = ""
 )
 
 data class CurrencyConfig(
@@ -340,15 +342,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val periodCategoryMap = mutableMapOf<String, Double>()
         periodTxs.forEach { tx ->
             if (tx.type == "EXPENSE") {
-                periodRawExpense += tx.amount
-                periodCategoryMap[tx.category] = (periodCategoryMap[tx.category] ?: 0.0) + tx.amount
+                val isCoveredExternally = tx.note.contains("[Pagado de Fondo Extraordinario") || tx.note.contains("[Pagado con Ahorros")
+                if (!isCoveredExternally) {
+                    periodRawExpense += tx.amount
+                    periodCategoryMap[tx.category] = (periodCategoryMap[tx.category] ?: 0.0) + tx.amount
+                }
             }
         }
         val periodActiveExpense = periodRawExpense * multiplier
 
-        // Scheduled expenses filtering for active period
+        // Scheduled expenses filtering for active period (only period budget funded expenses count against period budget)
         val periodScheduled = scheduledList.filter { isTimestampInPeriod(it.dueDate, periodMode) }
-        val periodPendingScheduled = periodScheduled.filter { !it.isPaid }
+        val periodPendingScheduled = periodScheduled.filter { !it.isPaid && it.fundingSource != "EXTRAORDINARY_FUND" && it.fundingSource != "SAVINGS" }
         val periodPendingRawTotal = periodPendingScheduled.sumOf { it.amount }
         val periodPendingActiveTotal = periodPendingRawTotal * multiplier
 
@@ -409,30 +414,94 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         var periodGeneralBudgetLimit = 0.0
 
         if (generalBudget != null && generalBudget.limitAmount > 0) {
-            val baseLimit = if (periodMode == "MONTHLY") generalBudget.limitAmount else (generalBudget.limitAmount / 2.0)
-            val convertedLimit = baseLimit * multiplier
-            periodGeneralBudgetLimit = convertedLimit
+            val monthlyBaseLimit = generalBudget.limitAmount
+            val fortnightBaseLimit = monthlyBaseLimit / 2.0
 
-            val totalCommittedRaw = periodRawExpense + periodPendingRawTotal
-            val pct = ((totalCommittedRaw / baseLimit) * 100).toInt()
+            // Fortnight 1 metrics
+            val q1Txs = txs.filter { isTimestampInPeriod(it.timestamp, "FORTNIGHT_1") && it.type == "EXPENSE" && !it.note.contains("[Pagado de Fondo Extraordinario") && !it.note.contains("[Pagado con Ahorros") }
+            val q1SpentRaw = q1Txs.sumOf { it.amount }
+            val q1PendingRaw = scheduledList.filter { isTimestampInPeriod(it.dueDate, "FORTNIGHT_1") && !it.isPaid && it.fundingSource != "EXTRAORDINARY_FUND" && it.fundingSource != "SAVINGS" }.sumOf { it.amount }
+            val q1CommittedRaw = q1SpentRaw + q1PendingRaw
+            val q1Limit = fortnightBaseLimit * multiplier
+            val q1Committed = q1CommittedRaw * multiplier
+            val q1Spent = q1SpentRaw * multiplier
+            val q1Pending = q1PendingRaw * multiplier
 
-            val periodLabel = when (periodMode) {
-                "FORTNIGHT_1" -> "Presupuesto 1ª Quincena (1-15)"
-                "FORTNIGHT_2" -> "Presupuesto 2ª Quincena (16-31)"
-                else -> "Presupuesto Total Mensual"
-            }
+            // Fortnight 2 metrics
+            val q2Txs = txs.filter { isTimestampInPeriod(it.timestamp, "FORTNIGHT_2") && it.type == "EXPENSE" && !it.note.contains("[Pagado de Fondo Extraordinario") && !it.note.contains("[Pagado con Ahorros") }
+            val q2SpentRaw = q2Txs.sumOf { it.amount }
+            val q2PendingRaw = scheduledList.filter { isTimestampInPeriod(it.dueDate, "FORTNIGHT_2") && !it.isPaid && it.fundingSource != "EXTRAORDINARY_FUND" && it.fundingSource != "SAVINGS" }.sumOf { it.amount }
+            val q2CommittedRaw = q2SpentRaw + q2PendingRaw
+            val q2Limit = fortnightBaseLimit * multiplier
+            val q2Committed = q2CommittedRaw * multiplier
+            val q2Spent = q2SpentRaw * multiplier
+            val q2Pending = q2PendingRaw * multiplier
 
-            budgetProgressList.add(
-                BudgetProgress(
-                    category = periodLabel,
-                    limitAmount = convertedLimit,
-                    spentAmount = periodActiveExpense,
-                    pendingAmount = periodPendingActiveTotal,
-                    percentage = pct,
-                    isExceeded = pct >= 100,
-                    isWarning = pct >= generalBudget.alertThresholdPercent
+            // Automatic continuation: when 1ª Quincena reaches 100%, excess continues towards 2ª Quincena
+            val q1Excess = (q1Committed - q1Limit).coerceAtLeast(0.0)
+
+            if (periodMode == "FORTNIGHT_1" || periodMode == "FORTNIGHT_2") {
+                periodGeneralBudgetLimit = if (periodMode == "FORTNIGHT_1") q1Limit else q2Limit
+
+                val q1Pct = if (q1Limit > 0) ((q1Committed / q1Limit) * 100).toInt() else 0
+                val q1CarryNotice = if (q1Excess > 0) {
+                    "Excedente de ${currConfig.symbol}${String.format(Locale.US, "%.2f", q1Excess)} continúa hacia la 2ª Quincena"
+                } else ""
+
+                budgetProgressList.add(
+                    BudgetProgress(
+                        category = "Presupuesto 1ª Quincena (1-15)",
+                        limitAmount = q1Limit,
+                        spentAmount = minOf(q1Limit, q1Spent),
+                        pendingAmount = if (q1Spent >= q1Limit) 0.0 else minOf(q1Limit - q1Spent, q1Pending),
+                        percentage = minOf(100, q1Pct),
+                        isExceeded = q1Pct >= 100 && (q1Committed + q2Committed) >= (q1Limit + q2Limit),
+                        isWarning = q1Pct >= generalBudget.alertThresholdPercent,
+                        subtitle = if (q1Pct >= 100) "100% alcanzado • Excedente continúa en 2ª Quincena" else "Límite: ${currConfig.symbol}${String.format(Locale.US, "%.2f", q1Limit)}",
+                        carryoverNotice = q1CarryNotice
+                    )
                 )
-            )
+
+                val q2EffectiveCommitted = q2Committed + q1Excess
+                val q2Pct = if (q2Limit > 0) ((q2EffectiveCommitted / q2Limit) * 100).toInt() else 0
+                val q2CarryNotice = if (q1Excess > 0) {
+                    "Continúa absorbiendo ${currConfig.symbol}${String.format(Locale.US, "%.2f", q1Excess)} de la 1ª Quincena"
+                } else ""
+
+                budgetProgressList.add(
+                    BudgetProgress(
+                        category = "Presupuesto 2ª Quincena (16-Fin)",
+                        limitAmount = q2Limit,
+                        spentAmount = q2Spent + q1Excess,
+                        pendingAmount = q2Pending,
+                        percentage = q2Pct,
+                        isExceeded = q2Pct >= 100,
+                        isWarning = q2Pct >= generalBudget.alertThresholdPercent,
+                        subtitle = if (q1Excess > 0) "Incluye excedente continuo de 1ª Quincena (${currConfig.symbol}${String.format(Locale.US, "%.2f", q1Excess)})" else "Límite: ${currConfig.symbol}${String.format(Locale.US, "%.2f", q2Limit)}",
+                        carryoverNotice = q2CarryNotice
+                    )
+                )
+            } else {
+                // Monthly Mode
+                val convertedLimit = monthlyBaseLimit * multiplier
+                periodGeneralBudgetLimit = convertedLimit
+                val totalCommittedRaw = periodRawExpense + periodPendingRawTotal
+                val pct = ((totalCommittedRaw / monthlyBaseLimit) * 100).toInt()
+
+                budgetProgressList.add(
+                    BudgetProgress(
+                        category = "Presupuesto Total Mensual",
+                        limitAmount = convertedLimit,
+                        spentAmount = periodActiveExpense,
+                        pendingAmount = periodPendingActiveTotal,
+                        percentage = pct,
+                        isExceeded = pct >= 100,
+                        isWarning = pct >= generalBudget.alertThresholdPercent,
+                        subtitle = "Presupuesto global del periodo",
+                        carryoverNotice = if (q1Excess > 0) "1ª Quincena completó el 100% y continuó hacia la 2ª Quincena" else ""
+                    )
+                )
+            }
         }
 
         budgets.filter { it.category != "GENERAL" }.forEach { b ->
@@ -455,7 +524,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     pendingAmount = convertedPending,
                     percentage = pct,
                     isExceeded = pct >= 100,
-                    isWarning = pct >= b.alertThresholdPercent
+                    isWarning = pct >= b.alertThresholdPercent,
+                    subtitle = if (pct >= 100) "Límite superado • Continúa cubierto por el presupuesto del periodo" else "",
+                    carryoverNotice = if (pct >= 100) "Excedente absorbido por el presupuesto del periodo" else ""
                 )
             )
         }
@@ -511,12 +582,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         repository.bindFirebaseManager(firebaseManager)
-        // Ensure Firestore cloud version metadata is set to v1.7 for all active devices
-        // Ensure Firestore cloud version metadata is set to v1.8 for all active devices
+        // Ensure Firestore cloud version metadata is set to v2.1 for all active devices
         repository.publishVersionToCloud(
-            version = "1.8",
-            notes = "Versión 1.8: Corrección en presupuestos multimoneda, pre-cierre y cierre formal de estados de cuenta, 3 temas (Claro, Oscuro, Elegante), gastos programados recurrentes mensuales y confirmación con ✅.",
-            apkUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/FinanzasClara-v1.2.apk"
+            version = "2.1",
+            notes = "Versión 2.1: Continuación automática de presupuesto entre quincenas al superar el 100%, selección de origen de fondos (Presupuesto o Fondos Extraordinarios) en Gastos Programados, soporte completo para pagos recurrentes mensuales con renovación automática y corrección en la edición/eliminación de registros e inversiones.",
+            apkUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v2.1/FinanzasClaras-v2.1.apk"
         )
         viewModelScope.launch {
             repository.seedInitialDataIfEmpty(getApplication())
@@ -562,9 +632,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun publishNewVersionToCloud(
-        version: String = "1.8",
-        notes: String = "Versión 1.8: Corrección en presupuestos multimoneda, pre-cierre y cierre formal de estados de cuenta, 3 temas (Claro, Oscuro, Elegante), gastos programados recurrentes mensuales y confirmación con ✅.",
-        apkUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/FinanzasClara-v1.2.apk"
+        version: String = "2.1",
+        notes: String = "Versión 2.1: Continuación automática de presupuesto entre quincenas al superar el 100%, selección de origen de fondos (Presupuesto o Fondos Extraordinarios) en Gastos Programados, soporte completo para pagos recurrentes mensuales con renovación automática y corrección en la edición/eliminación de registros e inversiones.",
+        apkUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v2.1/FinanzasClaras-v2.1.apk"
     ) {
         repository.publishVersionToCloud(version, notes, apkUrl)
         _importMessage.value = "🚀 Versión v$version publicada en Firebase Firestore (app_config/version). Todos los dispositivos la detectarán automáticamente."
@@ -1065,7 +1135,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         attachmentUri: String? = null,
         note: String = "",
         isEmergencyPriority: Boolean = false,
-        isRecurringMonthly: Boolean = false
+        isRecurringMonthly: Boolean = false,
+        fundingSource: String = "PERIOD_BUDGET",
+        extraordinaryFundId: Long? = null,
+        extraordinaryFundTitle: String = ""
     ) {
         viewModelScope.launch {
             val baseAmount = convertToCordobas(amount)
@@ -1081,7 +1154,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 note = note,
                 isEmergencyPriority = isEmergencyPriority,
                 isRecurringMonthly = isRecurringMonthly,
-                currency = "C$"
+                currency = "C$",
+                fundingSource = fundingSource,
+                extraordinaryFundId = extraordinaryFundId,
+                extraordinaryFundTitle = extraordinaryFundTitle
             )
             val id = repository.addScheduledExpense(entity)
             val entityWithId = entity.copy(id = id)
@@ -1106,7 +1182,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         attachmentUri: String? = null,
         note: String = "",
         isEmergencyPriority: Boolean = false,
-        isRecurringMonthly: Boolean = false
+        isRecurringMonthly: Boolean = false,
+        fundingSource: String = "PERIOD_BUDGET",
+        extraordinaryFundId: Long? = null,
+        extraordinaryFundTitle: String = ""
     ) {
         viewModelScope.launch {
             val baseAmount = convertToCordobas(amount)
@@ -1122,7 +1201,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 note = note,
                 isEmergencyPriority = isEmergencyPriority,
                 isRecurringMonthly = isRecurringMonthly,
-                currency = "C$"
+                currency = "C$",
+                fundingSource = fundingSource,
+                extraordinaryFundId = extraordinaryFundId,
+                extraordinaryFundTitle = extraordinaryFundTitle
             )
             repository.updateScheduledExpense(entity)
             if (notifyReminder) {
@@ -1134,19 +1216,51 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun markScheduledExpenseAsPaid(expense: ScheduledExpenseEntity) {
+    fun markScheduledExpenseAsPaid(
+        expense: ScheduledExpenseEntity,
+        chosenFundingSource: String? = null,
+        chosenExtraordinaryFundId: Long? = null,
+        chosenExtraordinaryFundTitle: String? = null
+    ) {
         viewModelScope.launch {
+            val effectiveFundingSource = chosenFundingSource ?: expense.fundingSource
+            val effectiveFundId = chosenExtraordinaryFundId ?: expense.extraordinaryFundId
+            val effectiveFundTitle = chosenExtraordinaryFundTitle ?: expense.extraordinaryFundTitle
+
             PaymentAlarmScheduler.cancelPaymentReminders(getApplication(), expense.id)
-            repository.updateScheduledExpense(expense.copy(isPaid = true))
+            repository.updateScheduledExpense(
+                expense.copy(
+                    isPaid = true,
+                    fundingSource = effectiveFundingSource,
+                    extraordinaryFundId = effectiveFundId,
+                    extraordinaryFundTitle = effectiveFundTitle
+                )
+            )
+
+            // If paid from an Extraordinary Fund, register the allocation in that fund to discount its balance
+            if (effectiveFundingSource == "EXTRAORDINARY_FUND" && effectiveFundId != null && effectiveFundId > 0) {
+                addAllocationToExtraordinaryFund(
+                    fundId = effectiveFundId,
+                    allocationTitle = "Pago: ${expense.title}",
+                    amount = expense.amount, // base amount in cordobas
+                    category = expense.category,
+                    note = "Gasto programado liquidado desde este fondo"
+                )
+            }
 
             // Create a real transaction for this paid scheduled expense
+            val sourceTag = when (effectiveFundingSource) {
+                "EXTRAORDINARY_FUND" -> " [Pagado de Fondo Extraordinario: $effectiveFundTitle]"
+                "SAVINGS" -> " [Pagado con Ahorros / Fondos Externos]"
+                else -> " [Presupuesto del Período]"
+            }
             val newTx = TransactionEntity(
                 title = "Pago: ${expense.title}",
                 amount = expense.amount,
                 category = expense.category,
                 type = "EXPENSE",
                 timestamp = System.currentTimeMillis(),
-                note = "Gasto programado registrado como pagado" + if (expense.note.isNotBlank()) " (${expense.note})" else "",
+                note = "Gasto programado registrado como pagado$sourceTag" + if (expense.note.isNotBlank()) " (${expense.note})" else "",
                 attachmentUri = expense.attachmentUri
             )
             repository.addTransaction(newTx)
@@ -1168,7 +1282,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     note = expense.note,
                     isEmergencyPriority = expense.isEmergencyPriority,
                     isRecurringMonthly = true,
-                    currency = expense.currency
+                    currency = expense.currency,
+                    fundingSource = effectiveFundingSource,
+                    extraordinaryFundId = effectiveFundId,
+                    extraordinaryFundTitle = effectiveFundTitle
                 )
                 val nextId = repository.addScheduledExpense(nextExpense)
                 if (nextExpense.notifyReminder) {
@@ -1183,7 +1300,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 limitAmount = expense.amount,
                 percent = 100
             )
-            _importMessage.value = "✅ Pago registrado con éxito." + if (expense.isRecurringMonthly) " 🔁 Se programó automáticamente el siguiente pago para el próximo mes." else ""
+            _importMessage.value = "✅ Pago registrado con éxito (${when(effectiveFundingSource) {
+                "EXTRAORDINARY_FUND" -> "descontado de Fondo Extraordinario: $effectiveFundTitle"
+                "SAVINGS" -> "cubierto con Ahorros/Otros Recursos"
+                else -> "cargado al Presupuesto del Período"
+            }})." + if (expense.isRecurringMonthly) " 🔁 Siguiente pago programado para el próximo mes." else ""
         }
     }
 

@@ -25,8 +25,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -48,6 +50,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -59,7 +62,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -109,6 +115,7 @@ import com.example.ui.components.categoryList
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.PrimaryEmerald
+import com.example.ui.theme.SleekPrimary
 import com.example.ui.theme.WarningAmber
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -122,9 +129,9 @@ fun BudgetScreen(
     onSaveBudgetLimit: (category: String, limit: Double, threshold: Int) -> Unit,
     onDeleteBudget: (category: String) -> Unit = {},
     onSetBudgetPeriodMode: (mode: String) -> Unit,
-    onAddScheduledExpense: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isRecurring: Boolean) -> Unit,
-    onUpdateScheduledExpense: (id: Long, title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isPriority: Boolean, isRecurring: Boolean) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
-    onMarkScheduledExpensePaid: (expense: ScheduledExpenseEntity) -> Unit,
+    onAddScheduledExpense: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isRecurring: Boolean, fundingSource: String, extraordinaryFundId: Long?, extraordinaryFundTitle: String) -> Unit,
+    onUpdateScheduledExpense: (id: Long, title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isPriority: Boolean, isRecurring: Boolean, fundingSource: String, extraordinaryFundId: Long?, extraordinaryFundTitle: String) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
+    onMarkScheduledExpensePaid: (expense: ScheduledExpenseEntity, chosenFundingSource: String?, chosenFundId: Long?, chosenFundTitle: String?) -> Unit,
     onDeleteScheduledExpense: (expense: ScheduledExpenseEntity) -> Unit,
     onScanReceiptWithDueDate: ((Uri, (ReceiptScanResult) -> Unit) -> Unit)? = null,
     onArchivePeriod: (title: String, note: String, clearPeriodData: Boolean) -> Unit = { _, _, _ -> },
@@ -146,6 +153,7 @@ fun BudgetScreen(
 ) {
     var showAddScheduledDialog by remember { mutableStateOf(false) }
     var editingScheduledExpense by remember { mutableStateOf<ScheduledExpenseEntity?>(null) }
+    var payingScheduledExpense by remember { mutableStateOf<ScheduledExpenseEntity?>(null) }
     var showArchiveConfirmDialog by remember { mutableStateOf(false) }
     var showArchivedStatementsList by remember { mutableStateOf(false) }
     var selectedArchivedStatement by remember { mutableStateOf<ArchivedPeriodEntity?>(null) }
@@ -160,6 +168,7 @@ fun BudgetScreen(
     }
 
     var showCategoryBudgetDialog by remember { mutableStateOf(false) }
+    var editingBudgetCategory by remember { mutableStateOf<String?>(null) }
     var selectedCatForBudget by remember { mutableStateOf("Alimentación") }
     var catLimitInput by remember { mutableStateOf("") }
 
@@ -592,7 +601,7 @@ fun BudgetScreen(
                     item = item,
                     currencySymbol = uiState.currencySymbol,
                     onEdit = { editingScheduledExpense = item },
-                    onMarkPaid = { onMarkScheduledExpensePaid(item) },
+                    onMarkPaid = { payingScheduledExpense = item },
                     onDelete = { onDeleteScheduledExpense(item) }
                 )
             }
@@ -649,6 +658,8 @@ fun BudgetScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
+                                editingBudgetCategory = null
+                                selectedCatForBudget = categoryList.firstOrNull { it != "Varios" && it != "Otro" } ?: "Alimentación"
                                 catLimitInput = ""
                                 showCategoryBudgetDialog = true
                             },
@@ -704,8 +715,11 @@ fun BudgetScreen(
                     currencySymbol = uiState.currencySymbol,
                     onEdit = if (isCustomCat) {
                         {
+                            editingBudgetCategory = progress.category
                             selectedCatForBudget = progress.category
-                            catLimitInput = String.format(Locale.US, "%.2f", progress.limitAmount)
+                            val existingBudget = uiState.budgets.find { it.category == progress.category }
+                            val rawAmt = existingBudget?.limitAmount ?: (progress.limitAmount / uiState.activeConversionMultiplier)
+                            catLimitInput = String.format(Locale.US, "%.2f", rawAmt * uiState.activeConversionMultiplier)
                             showCategoryBudgetDialog = true
                         }
                     } else null,
@@ -736,11 +750,12 @@ fun BudgetScreen(
     if (showAddScheduledDialog) {
         AddScheduledExpenseDialog(
             currencySymbol = uiState.currencySymbol,
+            extraordinaryFunds = uiState.extraordinaryFunds,
             initialExpense = null,
             onDismiss = { showAddScheduledDialog = false },
             onScanReceiptWithDueDate = onScanReceiptWithDueDate,
-            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note, isRecurring ->
-                onAddScheduledExpense(title, amount, category, dueDate, notify, attachmentUri, note, isRecurring)
+            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note, isRecurring, fundingSource, fundId, fundTitle ->
+                onAddScheduledExpense(title, amount, category, dueDate, notify, attachmentUri, note, isRecurring, fundingSource, fundId, fundTitle)
                 showAddScheduledDialog = false
             }
         )
@@ -750,10 +765,11 @@ fun BudgetScreen(
     editingScheduledExpense?.let { expenseToEdit ->
         AddScheduledExpenseDialog(
             currencySymbol = uiState.currencySymbol,
+            extraordinaryFunds = uiState.extraordinaryFunds,
             initialExpense = expenseToEdit,
             onDismiss = { editingScheduledExpense = null },
             onScanReceiptWithDueDate = onScanReceiptWithDueDate,
-            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note, isRecurring ->
+            onConfirm = { title, amount, category, dueDate, notify, attachmentUri, note, isRecurring, fundingSource, fundId, fundTitle ->
                 onUpdateScheduledExpense(
                     expenseToEdit.id,
                     title,
@@ -764,9 +780,26 @@ fun BudgetScreen(
                     attachmentUri,
                     note,
                     expenseToEdit.isEmergencyPriority,
-                    isRecurring
+                    isRecurring,
+                    fundingSource,
+                    fundId,
+                    fundTitle
                 )
                 editingScheduledExpense = null
+            }
+        )
+    }
+
+    // Pay Scheduled Expense Dialog (Choose where to take the money from)
+    payingScheduledExpense?.let { expenseToPay ->
+        PayScheduledExpenseSourceDialog(
+            expense = expenseToPay,
+            extraordinaryFunds = uiState.extraordinaryFunds,
+            currencySymbol = uiState.currencySymbol,
+            onDismiss = { payingScheduledExpense = null },
+            onConfirmPay = { chosenSource, chosenFundId, chosenFundTitle ->
+                onMarkScheduledExpensePaid(expenseToPay, chosenSource, chosenFundId, chosenFundTitle)
+                payingScheduledExpense = null
             }
         )
     }
@@ -775,14 +808,20 @@ fun BudgetScreen(
     if (showCategoryBudgetDialog) {
         var catExpanded by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { showCategoryBudgetDialog = false },
+            onDismissRequest = {
+                showCategoryBudgetDialog = false
+                editingBudgetCategory = null
+            },
             title = {
-                Text("Presupuesto por Categoría", fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (editingBudgetCategory != null) "Editar Presupuesto de $selectedCatForBudget" else "Presupuesto por Categoría",
+                    fontWeight = FontWeight.Bold
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Asigna un límite mensual a una categoría específica (ej. Alimentación, Servicios, etc.):",
+                        "Asigna un límite mensual a una categoría específica (ej. Inversión, Alimentación, Servicios, etc.):",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -834,8 +873,12 @@ fun BudgetScreen(
                     onClick = {
                         val parsed = catLimitInput.replace(',', '.').trim().toDoubleOrNull() ?: 0.0
                         if (parsed > 0) {
+                            if (editingBudgetCategory != null && editingBudgetCategory != selectedCatForBudget) {
+                                onDeleteBudget(editingBudgetCategory!!)
+                            }
                             onSaveBudgetLimit(selectedCatForBudget, parsed, 80)
                             showCategoryBudgetDialog = false
+                            editingBudgetCategory = null
                             catLimitInput = ""
                         }
                     },
@@ -846,8 +889,29 @@ fun BudgetScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCategoryBudgetDialog = false }) {
-                    Text("Cancelar")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (editingBudgetCategory != null) {
+                        TextButton(
+                            onClick = {
+                                onDeleteBudget(editingBudgetCategory!!)
+                                showCategoryBudgetDialog = false
+                                editingBudgetCategory = null
+                                catLimitInput = ""
+                            },
+                            colors = ButtonDefaults.textButtonColors(contentColor = ExpenseRed)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Eliminar", color = ExpenseRed)
+                        }
+                    }
+                    TextButton(onClick = {
+                        showCategoryBudgetDialog = false
+                        editingBudgetCategory = null
+                        catLimitInput = ""
+                    }) {
+                        Text("Cancelar")
+                    }
                 }
             }
         )
@@ -971,6 +1035,49 @@ fun ScheduledExpenseItemCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Row(
+                        modifier = Modifier.padding(top = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val sourceBadge = when (item.fundingSource) {
+                            "EXTRAORDINARY_FUND" -> "🌟 Fondo: ${item.extraordinaryFundTitle.ifBlank { "Extraordinario" }}"
+                            "SAVINGS" -> "🏦 Ahorros / Otros"
+                            else -> "💰 Presupuesto del Período"
+                        }
+                        val sourceColor = when (item.fundingSource) {
+                            "EXTRAORDINARY_FUND" -> PrimaryEmerald
+                            "SAVINGS" -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = sourceColor.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = sourceBadge,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = sourceColor,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+
+                        if (item.isRecurringMonthly) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = SleekPrimary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = "🔁 Recurrente",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SleekPrimary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Text(
@@ -1050,11 +1157,21 @@ fun ScheduledExpenseItemCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = if (item.notifyReminder) "🔔 Alerta 2 días y 1 día antes" else "🔕 Sin recordatorio",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        text = if (item.notifyReminder) "🔔 Alerta 2 días y 1 día antes" else "🔕 Sin recordatorio",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (item.isRecurringMonthly) {
+                        Text(
+                            text = "🔁 Recurrente mensual automático",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = SleekPrimary
+                        )
+                    }
+                }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!item.isPaid) {
@@ -1152,34 +1269,40 @@ fun ScheduledExpenseItemCard(
 @Composable
 fun AddScheduledExpenseDialog(
     currencySymbol: String,
+    extraordinaryFunds: List<ExtraordinaryFundEntity> = emptyList(),
     initialExpense: ScheduledExpenseEntity? = null,
     onDismiss: () -> Unit,
     onScanReceiptWithDueDate: ((Uri, (ReceiptScanResult) -> Unit) -> Unit)? = null,
-    onConfirm: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isRecurring: Boolean) -> Unit
+    onConfirm: (title: String, amount: Double, category: String, dueDate: Long, notify: Boolean, attachmentUri: String?, note: String, isRecurring: Boolean, fundingSource: String, extraordinaryFundId: Long?, extraordinaryFundTitle: String) -> Unit
 ) {
     val context = LocalContext.current
-    var title by remember { mutableStateOf(initialExpense?.title ?: "") }
-    var amountText by remember {
+    var title by remember(initialExpense) { mutableStateOf(initialExpense?.title ?: "") }
+    var amountText by remember(initialExpense) {
         mutableStateOf(
             if (initialExpense != null && initialExpense.amount > 0)
                 String.format(Locale.US, "%.2f", initialExpense.amount)
             else ""
         )
     }
-    var selectedCategory by remember { mutableStateOf(initialExpense?.category ?: "Servicios") }
-    var notifyReminder by remember { mutableStateOf(initialExpense?.notifyReminder ?: true) }
-    var isRecurringMonthly by remember { mutableStateOf(initialExpense?.isRecurringMonthly ?: false) }
+    var selectedCategory by remember(initialExpense) { mutableStateOf(initialExpense?.category ?: "Servicios") }
+    var notifyReminder by remember(initialExpense) { mutableStateOf(initialExpense?.notifyReminder ?: true) }
+    var isRecurringMonthly by remember(initialExpense) { mutableStateOf(initialExpense?.isRecurringMonthly ?: false) }
     var categoryExpanded by remember { mutableStateOf(false) }
 
+    var fundingSource by remember(initialExpense) { mutableStateOf(initialExpense?.fundingSource ?: "PERIOD_BUDGET") }
+    var extraordinaryFundId by remember(initialExpense) { mutableStateOf(initialExpense?.extraordinaryFundId) }
+    var extraordinaryFundTitle by remember(initialExpense) { mutableStateOf(initialExpense?.extraordinaryFundTitle ?: "") }
+    var fundDropdownExpanded by remember { mutableStateOf(false) }
+
     val calendar = remember { Calendar.getInstance() }
-    var selectedDueDateMs by remember {
+    var selectedDueDateMs by remember(initialExpense) {
         mutableLongStateOf(initialExpense?.dueDate ?: (calendar.timeInMillis + (3 * 86400000L)))
     }
 
     val sdf = SimpleDateFormat("dd 'de' MMMM, yyyy", Locale("es", "ES"))
     val formattedSelectedDate = sdf.format(Date(selectedDueDateMs))
 
-    var attachedImageUri by remember { mutableStateOf<String?>(initialExpense?.attachmentUri) }
+    var attachedImageUri by remember(initialExpense) { mutableStateOf<String?>(initialExpense?.attachmentUri) }
     var isScanningAttachment by remember { mutableStateOf(false) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -1352,6 +1475,105 @@ fun AddScheduledExpenseDialog(
                     )
                 }
 
+                // Funding Source Selector
+                Text(
+                    text = "💰 Origen del dinero para pagar:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = fundingSource == "PERIOD_BUDGET",
+                        onClick = { fundingSource = "PERIOD_BUDGET" },
+                        label = { Text("Presupuesto", fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PrimaryEmerald,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    FilterChip(
+                        selected = fundingSource == "EXTRAORDINARY_FUND",
+                        onClick = {
+                            fundingSource = "EXTRAORDINARY_FUND"
+                            if (extraordinaryFundId == null && extraordinaryFunds.isNotEmpty()) {
+                                extraordinaryFundId = extraordinaryFunds.first().id
+                                extraordinaryFundTitle = extraordinaryFunds.first().title
+                            }
+                        },
+                        label = { Text("Fondo Extr.", fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PrimaryEmerald,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    FilterChip(
+                        selected = fundingSource == "SAVINGS",
+                        onClick = { fundingSource = "SAVINGS" },
+                        label = { Text("Ahorros", fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = PrimaryEmerald,
+                            selectedLabelColor = Color.White
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                if (fundingSource == "EXTRAORDINARY_FUND") {
+                    if (extraordinaryFunds.isEmpty()) {
+                        Text(
+                            text = "⚠️ No hay fondos extraordinarios registrados. Puedes crearlos en la sección 'Ingresos y Fondos Extraordinarios' más abajo.",
+                            fontSize = 11.sp,
+                            color = WarningAmber
+                        )
+                    } else {
+                        val currentFund = extraordinaryFunds.find { it.id == extraordinaryFundId } ?: extraordinaryFunds.first()
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedCard(
+                                onClick = { fundDropdownExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("Fondo seleccionado:", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(currentFund.title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = fundDropdownExpanded,
+                                onDismissRequest = { fundDropdownExpanded = false }
+                            ) {
+                                extraordinaryFunds.forEach { fund ->
+                                    DropdownMenuItem(
+                                        text = { Text(fund.title) },
+                                        onClick = {
+                                            extraordinaryFundId = fund.id
+                                            extraordinaryFundTitle = fund.title
+                                            fundDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1391,7 +1613,7 @@ fun AddScheduledExpenseDialog(
             Button(
                 onClick = {
                     if (title.isNotBlank() && parsedAmount > 0) {
-                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder, attachedImageUri, "", isRecurringMonthly)
+                        onConfirm(title.trim(), parsedAmount, selectedCategory, selectedDueDateMs, notifyReminder, attachedImageUri, "", isRecurringMonthly, fundingSource, extraordinaryFundId, extraordinaryFundTitle)
                     }
                 },
                 enabled = title.isNotBlank() && parsedAmount > 0,
@@ -1407,4 +1629,261 @@ fun AddScheduledExpenseDialog(
         }
     )
 }
+
+@Composable
+fun PayScheduledExpenseSourceDialog(
+    expense: ScheduledExpenseEntity,
+    extraordinaryFunds: List<ExtraordinaryFundEntity>,
+    currencySymbol: String,
+    onDismiss: () -> Unit,
+    onConfirmPay: (fundingSource: String, fundId: Long?, fundTitle: String) -> Unit
+) {
+    var selectedSource by remember { mutableStateOf(expense.fundingSource) }
+    var selectedFundId by remember { mutableStateOf(expense.extraordinaryFundId ?: extraordinaryFunds.firstOrNull()?.id) }
+    var fundDropdownExpanded by remember { mutableStateOf(false) }
+
+    val selectedFund = extraordinaryFunds.find { it.id == selectedFundId } ?: extraordinaryFunds.firstOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = IncomeGreen, modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Confirmar Pago", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Header with expense summary
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(expense.title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "$currencySymbol${String.format(Locale.US, "%.2f", expense.amount)} • Categoría: ${expense.category}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (expense.isRecurringMonthly) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = SleekPrimary.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = "🔁 Pago Recurrente Mensual: Al confirmar el pago, la siguiente cuota se programará automáticamente para el próximo mes.",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = SleekPrimary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = "¿De dónde deseas tomar el dinero para pagar?",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                // Option 1: Presupuesto asignado en el período
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedSource = "PERIOD_BUDGET" },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(
+                        if (selectedSource == "PERIOD_BUDGET") 2.dp else 1.dp,
+                        if (selectedSource == "PERIOD_BUDGET") PrimaryEmerald else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selectedSource == "PERIOD_BUDGET") PrimaryEmerald.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedSource == "PERIOD_BUDGET",
+                            onClick = { selectedSource = "PERIOD_BUDGET" },
+                            colors = RadioButtonDefaults.colors(selectedColor = PrimaryEmerald)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("💰 Presupuesto Asignado del Período", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Se descuenta del presupuesto del período activo.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                // Option 2: Fondos Extraordinarios
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedSource = "EXTRAORDINARY_FUND" },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(
+                        if (selectedSource == "EXTRAORDINARY_FUND") 2.dp else 1.dp,
+                        if (selectedSource == "EXTRAORDINARY_FUND") PrimaryEmerald else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selectedSource == "EXTRAORDINARY_FUND") PrimaryEmerald.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = selectedSource == "EXTRAORDINARY_FUND",
+                                onClick = { selectedSource = "EXTRAORDINARY_FUND" },
+                                colors = RadioButtonDefaults.colors(selectedColor = PrimaryEmerald)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text("🌟 Fondos Extraordinarios", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("Se toma de un fondo extraordinario sin afectar el presupuesto del período.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        if (selectedSource == "EXTRAORDINARY_FUND") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (extraordinaryFunds.isEmpty()) {
+                                Text(
+                                    text = "⚠️ No tienes fondos extraordinarios registrados. Puedes crearlos en la sección 'Ingresos y Fondos Extraordinarios' más abajo.",
+                                    fontSize = 11.sp,
+                                    color = WarningAmber
+                                )
+                            } else {
+                                Box(modifier = Modifier.fillMaxWidth().padding(start = 36.dp)) {
+                                    OutlinedCard(
+                                        onClick = { fundDropdownExpanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = selectedFund?.title ?: "Seleccionar fondo...",
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSize = 12.sp
+                                                )
+                                                if (selectedFund != null) {
+                                                    val allocated = try {
+                                                        val arr = org.json.JSONArray(selectedFund.allocationsJson)
+                                                        var s = 0.0
+                                                        for (i in 0 until arr.length()) s += arr.getJSONObject(i).optDouble("amount", 0.0)
+                                                        s
+                                                    } catch (e: Exception) { 0.0 }
+                                                    val available = (selectedFund.totalAmount - allocated).coerceAtLeast(0.0)
+                                                    Text(
+                                                        text = "Saldo disp: $currencySymbol${String.format(Locale.US, "%.2f", available)}",
+                                                        fontSize = 10.sp,
+                                                        color = PrimaryEmerald
+                                                    )
+                                                }
+                                            }
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                        }
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = fundDropdownExpanded,
+                                        onDismissRequest = { fundDropdownExpanded = false }
+                                    ) {
+                                        extraordinaryFunds.forEach { fund ->
+                                            val allocated = try {
+                                                val arr = org.json.JSONArray(fund.allocationsJson)
+                                                var s = 0.0
+                                                for (i in 0 until arr.length()) s += arr.getJSONObject(i).optDouble("amount", 0.0)
+                                                s
+                                            } catch (e: Exception) { 0.0 }
+                                            val available = (fund.totalAmount - allocated).coerceAtLeast(0.0)
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Column {
+                                                        Text(fund.title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                        Text("Disponible: $currencySymbol${String.format(Locale.US, "%.2f", available)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                },
+                                                onClick = {
+                                                    selectedFundId = fund.id
+                                                    fundDropdownExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Option 3: Ahorros / Otros Recursos
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedSource = "SAVINGS" },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(
+                        if (selectedSource == "SAVINGS") 2.dp else 1.dp,
+                        if (selectedSource == "SAVINGS") PrimaryEmerald else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selectedSource == "SAVINGS") PrimaryEmerald.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedSource == "SAVINGS",
+                            onClick = { selectedSource = "SAVINGS" },
+                            colors = RadioButtonDefaults.colors(selectedColor = PrimaryEmerald)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("🏦 Ahorros / Otros Recursos", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Se paga con ahorros propios sin consumir el presupuesto asignado.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val fundTitle = if (selectedSource == "EXTRAORDINARY_FUND") (selectedFund?.title ?: "") else ""
+                    onConfirmPay(selectedSource, if (selectedSource == "EXTRAORDINARY_FUND") selectedFundId else null, fundTitle)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald)
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Confirmar y Pagar")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
+}
+
 

@@ -257,20 +257,23 @@ fun MainAppScreen(
                         onSaveBudgetLimit = { cat, limit, thresh ->
                             viewModel.saveBudgetLimit(cat, limit, thresh)
                         },
+                        onDeleteBudget = { cat ->
+                            viewModel.deleteBudget(cat)
+                        },
                         onSetBudgetPeriodMode = { mode ->
                             viewModel.setBudgetPeriodMode(mode)
                         },
-                        onAddScheduledExpense = { title, amount, cat, dueDate, notify, attachmentUri, note, isRecurring ->
-                            viewModel.addScheduledExpense(title, amount, cat, dueDate, notify, attachmentUri, note, isRecurringMonthly = isRecurring)
+                        onAddScheduledExpense = { title, amount, cat, dueDate, notify, attachmentUri, note, isRecurring, fundingSource, extraordinaryFundId, extraordinaryFundTitle ->
+                            viewModel.addScheduledExpense(title, amount, cat, dueDate, notify, attachmentUri, note, isRecurringMonthly = isRecurring, fundingSource = fundingSource, extraordinaryFundId = extraordinaryFundId, extraordinaryFundTitle = extraordinaryFundTitle)
                         },
-                        onUpdateScheduledExpense = { id, title, amount, cat, dueDate, notify, attachmentUri, note, isPriority, isRecurring ->
-                            viewModel.updateScheduledExpense(id, title, amount, cat, dueDate, notify, attachmentUri, note, isEmergencyPriority = isPriority, isRecurringMonthly = isRecurring)
+                        onUpdateScheduledExpense = { id, title, amount, cat, dueDate, notify, attachmentUri, note, isPriority, isRecurring, fundingSource, extraordinaryFundId, extraordinaryFundTitle ->
+                            viewModel.updateScheduledExpense(id, title, amount, cat, dueDate, notify, attachmentUri, note, isEmergencyPriority = isPriority, isRecurringMonthly = isRecurring, fundingSource = fundingSource, extraordinaryFundId = extraordinaryFundId, extraordinaryFundTitle = extraordinaryFundTitle)
                         },
                         onScanReceiptWithDueDate = { uri, onResult ->
                             viewModel.scanReceiptWithDueDate(uri, onResult)
                         },
-                        onMarkScheduledExpensePaid = { expense ->
-                            viewModel.markScheduledExpenseAsPaid(expense)
+                        onMarkScheduledExpensePaid = { expense, chosenSource, chosenFundId, chosenFundTitle ->
+                            viewModel.markScheduledExpenseAsPaid(expense, chosenSource, chosenFundId, chosenFundTitle)
                         },
                         onDeleteScheduledExpense = { expense ->
                             viewModel.deleteScheduledExpense(expense)

@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateCard(
-    currentVersion: String = "1.7",
+    currentVersion: String = "2.1",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -74,7 +74,7 @@ fun AppUpdateCard(
 
     val currentVer = remember {
         val installed = updateManager.getInstalledVersionName()
-        if (installed.isNotBlank()) installed else "1.7"
+        if (installed.isNotBlank()) installed else "2.1"
     }
 
     var isChecking by remember { mutableStateOf(false) }
@@ -89,9 +89,9 @@ fun AppUpdateCard(
     var repoInput by remember { mutableStateOf(updateManager.getRepositoryName()) }
 
     var showPublishDialog by remember { mutableStateOf(false) }
-    var publishVersion by remember { mutableStateOf("1.7") }
-    var publishNotes by remember { mutableStateOf("Versión 1.7: Título actualizado a Finanzas Claras, optimizador de descarga APK, Pull-to-Refresh y estabilidad multimoneda.") }
-    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v1.2/FinanzasClara-v1.2.apk") }
+    var publishVersion by remember { mutableStateOf("2.1") }
+    var publishNotes by remember { mutableStateOf("Versión 2.1: Continuación automática de presupuesto entre quincenas al superar el 100%, selección de origen de fondos (Presupuesto o Fondos Extraordinarios) en Gastos Programados, soporte completo para pagos recurrentes mensuales con renovación automática y corrección en la edición/eliminación de registros e inversiones.") }
+    var publishApkUrl by remember { mutableStateOf("https://github.com/${updateManager.getRepositoryName()}/releases/download/v2.1/FinanzasClaras-v2.1.apk") }
     var isPublishing by remember { mutableStateOf(false) }
 
     Card(

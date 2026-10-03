@@ -98,6 +98,13 @@ class FirebaseFinanceManager(
             db.firestoreSettings = settings
             firestore = db
 
+            // Proactively update latestVersion metadata to 2.1 in Firestore
+            publishVersionToCloud(
+                version = "2.1",
+                releaseNotes = "Versión 2.1: Continuación automática de presupuesto entre quincenas al superar el 100%, selección de origen de fondos (Presupuesto o Fondos Extraordinarios) en Gastos Programados, soporte completo para pagos recurrentes mensuales con renovación automática y corrección en la edición/eliminación de registros e inversiones.",
+                apkDownloadUrl = "https://github.com/jfrankjfas/MyFinance/releases/download/v2.1/FinanzasClaras-v2.1.apk"
+            )
+
             val firebaseAuth = FirebaseAuth.getInstance()
             auth = firebaseAuth
 
@@ -287,6 +294,10 @@ class FirebaseFinanceManager(
                 val attachment = doc.getString("attachmentUri")
                 val note = doc.getString("note") ?: ""
                 val isEmergency = doc.getBoolean("isEmergencyPriority") ?: false
+                val isRecurring = doc.getBoolean("isRecurringMonthly") ?: false
+                val fundingSource = doc.getString("fundingSource") ?: "PERIOD_BUDGET"
+                val fundId = doc.getLong("extraordinaryFundId")
+                val fundTitle = doc.getString("extraordinaryFundTitle") ?: ""
 
                 if (title.isNotBlank()) {
                     list.add(
@@ -300,7 +311,11 @@ class FirebaseFinanceManager(
                             notifyReminder = notify,
                             attachmentUri = attachment,
                             note = note,
-                            isEmergencyPriority = isEmergency
+                            isEmergencyPriority = isEmergency,
+                            isRecurringMonthly = isRecurring,
+                            fundingSource = fundingSource,
+                            extraordinaryFundId = fundId,
+                            extraordinaryFundTitle = fundTitle
                         )
                     )
                 }
@@ -684,9 +699,9 @@ class FirebaseFinanceManager(
      * dispositivo con la app instalada detecte la nueva versión v1.2 de inmediato.
      */
     fun publishVersionToCloud(
-        version: String = "1.2",
-        releaseNotes: String = "Corrección de edición de movimientos, precisión multimoneda C$ y USD, presupuesto quincenal con análisis, notificaciones de pago y sincronización total.",
-        apkDownloadUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v1.2/app-debug.apk"
+        version: String = "2.1",
+        releaseNotes: String = "Versión 2.1: Continuación automática de presupuesto entre quincenas al superar el 100%, selección de origen de fondos (Presupuesto o Fondos Extraordinarios) en Gastos Programados, soporte completo para pagos recurrentes mensuales con renovación automática y corrección en la edición/eliminación de registros e inversiones.",
+        apkDownloadUrl: String = "https://github.com/jfrankjfas/MyFinance/releases/download/v2.1/FinanzasClaras-v2.1.apk"
     ) {
         val db = firestore ?: return
         val data = hashMapOf(
@@ -783,6 +798,10 @@ class FirebaseFinanceManager(
                         val attachment = doc.getString("attachmentUri")
                         val note = doc.getString("note") ?: ""
                         val isEmergency = doc.getBoolean("isEmergencyPriority") ?: false
+                        val isRecurring = doc.getBoolean("isRecurringMonthly") ?: false
+                        val fundingSource = doc.getString("fundingSource") ?: "PERIOD_BUDGET"
+                        val fundId = doc.getLong("extraordinaryFundId")
+                        val fundTitle = doc.getString("extraordinaryFundTitle") ?: ""
                         list.add(
                             ScheduledExpenseEntity(
                                 id = id,
@@ -794,7 +813,11 @@ class FirebaseFinanceManager(
                                 notifyReminder = notify,
                                 attachmentUri = attachment,
                                 note = note,
-                                isEmergencyPriority = isEmergency
+                                isEmergencyPriority = isEmergency,
+                                isRecurringMonthly = isRecurring,
+                                fundingSource = fundingSource,
+                                extraordinaryFundId = fundId,
+                                extraordinaryFundTitle = fundTitle
                             )
                         )
                     }
@@ -919,10 +942,16 @@ class FirebaseFinanceManager(
     fun deleteTransactionFromCloud(tx: TransactionEntity) {
         if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
-        val docId = "tx_${tx.id}"
-        db.collection("finanzas_users").document(activeUserId)
-            .collection("transactions").document(docId)
-            .delete()
+        val userCol = db.collection("finanzas_users").document(activeUserId).collection("transactions")
+        if (tx.id > 0) {
+            userCol.document("tx_${tx.id}").delete()
+        }
+        userCol.document("tx_${tx.timestamp}_${tx.title.hashCode()}").delete()
+        // Also ensure any lingering transaction with the same timestamp and title is removed
+        userCol.whereEqualTo("timestamp", tx.timestamp).whereEqualTo("title", tx.title).get()
+            .addOnSuccessListener { snap ->
+                snap.documents.forEach { it.reference.delete() }
+            }
     }
 
     fun saveBudgetToCloud(b: BudgetEntity) {
@@ -943,10 +972,16 @@ class FirebaseFinanceManager(
     fun deleteBudgetFromCloud(category: String) {
         if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
+        val userCol = db.collection("finanzas_users").document(activeUserId).collection("budgets")
         val docId = "bg_${category.replace("/", "_")}"
-        db.collection("finanzas_users").document(activeUserId)
-            .collection("budgets").document(docId)
-            .delete()
+        userCol.document(docId).delete()
+        val clean = category.replace("ó", "o").replace("Ó", "O").replace("/", "_")
+        userCol.document("bg_$clean").delete()
+        userCol.document("bg_${category.lowercase()}").delete()
+        userCol.whereEqualTo("category", category).get()
+            .addOnSuccessListener { snap ->
+                snap.documents.forEach { it.reference.delete() }
+            }
     }
 
     fun saveScheduledExpenseToCloud(s: ScheduledExpenseEntity) {
@@ -964,6 +999,10 @@ class FirebaseFinanceManager(
             "attachmentUri" to (s.attachmentUri ?: ""),
             "note" to s.note,
             "isEmergencyPriority" to s.isEmergencyPriority,
+            "isRecurringMonthly" to s.isRecurringMonthly,
+            "fundingSource" to s.fundingSource,
+            "extraordinaryFundId" to (s.extraordinaryFundId ?: 0L),
+            "extraordinaryFundTitle" to s.extraordinaryFundTitle,
             "updatedAt" to System.currentTimeMillis()
         )
         db.collection("finanzas_users").document(activeUserId)
@@ -974,10 +1013,13 @@ class FirebaseFinanceManager(
     fun deleteScheduledExpenseFromCloud(s: ScheduledExpenseEntity) {
         if (activeUserId == "unauthenticated" || activeUserId.isBlank()) return
         val db = firestore ?: return
-        val docId = "se_${s.id}"
-        db.collection("finanzas_users").document(activeUserId)
-            .collection("scheduled_expenses").document(docId)
-            .delete()
+        val userCol = db.collection("finanzas_users").document(activeUserId).collection("scheduled_expenses")
+        if (s.id > 0) userCol.document("se_${s.id}").delete()
+        userCol.document("se_${s.dueDate}_${s.title.hashCode()}").delete()
+        userCol.whereEqualTo("title", s.title).get()
+            .addOnSuccessListener { snap ->
+                snap.documents.forEach { it.reference.delete() }
+            }
     }
 
     // Wipes all user collections in Firestore to start 100% completely from zero
@@ -1169,6 +1211,10 @@ class FirebaseFinanceManager(
                         "attachmentUri" to (s.attachmentUri ?: ""),
                         "note" to s.note,
                         "isEmergencyPriority" to s.isEmergencyPriority,
+                        "isRecurringMonthly" to s.isRecurringMonthly,
+                        "fundingSource" to s.fundingSource,
+                        "extraordinaryFundId" to (s.extraordinaryFundId ?: 0L),
+                        "extraordinaryFundTitle" to s.extraordinaryFundTitle,
                         "updatedAt" to System.currentTimeMillis()
                     )
                     batch.set(ref, data, SetOptions.merge())
